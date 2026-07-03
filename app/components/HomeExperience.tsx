@@ -5,8 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { OpeningScreen } from '@/app/components/OpeningScreen';
 import { ProjectList, type ProjectListItem } from '@/app/components/ProjectList';
-import { SiteInfo, type SiteInformation } from '@/app/components/SiteInfo';
-import { useHomeLayout } from '@/app/hooks/useHomeLayout';
+import { useSiteInfo } from '@/app/components/SiteInfoProvider';
 import {
   dispatchProjectTransitionStart,
   flattenHideSteps,
@@ -26,7 +25,6 @@ type OpeningImage = {
 type HomeExperienceProps = {
   openingImage?: OpeningImage | null;
   projects: ProjectListItem[];
-  information?: SiteInformation | null;
 };
 
 const OPENING_DISPLAY_MS = 2000;
@@ -42,15 +40,14 @@ type ActiveTransition = {
   columns: number[][];
 };
 
-export function HomeExperience({ openingImage, projects, information }: HomeExperienceProps) {
+export function HomeExperience({ openingImage, projects }: HomeExperienceProps) {
   const router = useRouter();
-  const siteInfoRef = useRef<HTMLDivElement>(null);
   const revealTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const navigateTimerRef = useRef<number | null>(null);
   const transitionRef = useRef<ActiveTransition | null>(null);
   const transitionStartRef = useRef<number>(0);
-  const { layoutMode, isMobile } = useHomeLayout(siteInfoRef);
+  const { layoutMode, isMobile, setTransitionHidden } = useSiteInfo();
   const hasOpening = Boolean(openingImage);
   const [openingVisible, setOpeningVisible] = useState(hasOpening);
   const [openingFading, setOpeningFading] = useState(false);
@@ -77,6 +74,14 @@ export function HomeExperience({ openingImage, projects, information }: HomeExpe
   const transitionHiddenIndices = new Set(
     activeTransition ? flattenHideSteps(activeTransition.hideSteps, transitionHideStep) : [],
   );
+
+  useEffect(() => {
+    setTransitionHidden(transitionHideStep > 0);
+
+    return () => {
+      setTransitionHidden(false);
+    };
+  }, [setTransitionHidden, transitionHideStep]);
 
   const clearTransitionTimers = () => {
     if (hideTimerRef.current !== null) {
@@ -277,12 +282,6 @@ export function HomeExperience({ openingImage, projects, information }: HomeExpe
           transitionColumns={activeTransition?.columns ?? null}
           transitionTargetIndex={activeTransition?.projectIndex ?? null}
           onProjectNavigate={handleProjectNavigate}
-        />
-        <SiteInfo
-          ref={siteInfoRef}
-          information={information}
-          isMobile={isMobile}
-          className={transitionHideStep > 0 ? 'site-info--transition-hidden' : undefined}
         />
       </main>
     </>

@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { ProjectList, type ProjectListItem } from '@/app/components/ProjectList';
@@ -14,11 +15,15 @@ import {
   buildColumnHidePlan,
   clearProjectTransition,
   dispatchProjectTransitionEnd,
+  dispatchProjectTransitionStart,
   flattenHideSteps,
   PROJECT_TRANSITION_BG_FADE_MS,
   readProjectTransition,
+  saveProjectTransition,
+  startProjectPageBackgroundTransition,
   type ColumnHidePlan,
 } from '@/app/lib/projectTransition';
+import type { RandomImageLayout } from '@/app/lib/randomImageLayout';
 
 type ProjectImage = {
   url: string;
@@ -46,8 +51,23 @@ const PROJECT_PAGE_MOUNT_LEAD_MS = 250;
 const SCROLL_BOTTOM_THRESHOLD_PX = 1;
 const LIST_REVEAL_INTERVAL_MS = 80;
 const LIST_HIDE_INTERVAL_MS = 80;
+const PROJECT_NAVIGATE_HIDE_INTERVAL_MS = 80;
+const SCROLL_TO_TOP_MS = 1200;
+
+type ActiveTransition = {
+  slug: string;
+  projectIndex: number;
+  layout: RandomImageLayout;
+  hideSteps: number[][];
+  columns: number[][];
+};
+
+function easeInOutCubic(t: number) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
 
 export function ProjectPageExperience({ project, projects }: ProjectPageExperienceProps) {
+  const router = useRouter();
   const pageRef = useRef<HTMLElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
@@ -56,7 +76,18 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   const revealTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const overlayCloseTimerRef = useRef<number | null>(null);
-  const [fromTransition] = useState(() => readProjectTransition(project.slug));
+  const scrollToTopFrameRef = useRef<number | null>(null);
+  const transitionRef = useRef<ActiveTransition | null>(null);
+  const transitionStartRef = useRef<number>(0);
+  const transitionHideTimerRef = useRef<number | null>(null);
+  const navigateTimerRef = useRef<number | null>(null);
+  const [fromTransition, setFromTransition] =
+    useState<ReturnType<typeof readProjectTransition>>(null);
+  const [layouts, setLayouts] = useState<ReturnType<typeof buildProjectPageImageLayouts> | null>(
+    null,
+  );
+  const [bridgeHandoffComplete, setBridgeHandoffComplete] = useState(true);
+  const [secondaryMounting, setSecondaryMounting] = useState(true);
   const [listOverlayActive, setListOverlayActive] = useState(false);
   const [listOverlayFading, setListOverlayFading] = useState(false);
   const [listRevealPlan, setListRevealPlan] = useState<ColumnHidePlan | null>(null);
@@ -65,16 +96,18 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   const [listHiding, setListHiding] = useState(false);
   const [listHidePlan, setListHidePlan] = useState<ColumnHidePlan | null>(null);
   const [listHideStep, setListHideStep] = useState(0);
-  const [bridgeHandoffComplete, setBridgeHandoffComplete] = useState(!fromTransition);
-  const [secondaryMounting, setSecondaryMounting] = useState(!fromTransition);
+  const [activeTransition, setActiveTransition] = useState<ActiveTransition | null>(null);
+  const [transitionHideStep, setTransitionHideStep] = useState(0);
   const { layoutMode, isMobile } = useHomeLayout(layoutRef);
-  const layouts = useMemo(() => {
-    if (typeof window === 'undefined') {
-      return null;
-    }
 
-    return buildProjectPageImageLayouts(project.images, fromTransition?.layout ?? null);
-  }, [project.images, fromTransition]);
+  useLayoutEffect(() => {
+    const transition = readProjectTransition(project.slug);
+    setFromTransition(transition);
+    setLayouts(buildProjectPageImageLayouts(project.images, transition?.layout ?? null));
+    setBridgeHandoffComplete(!transition);
+    setSecondaryMounting(!transition);
+  }, [project.images, project.slug]);
+
   const canvasHeight = useMemo(
     () => (layouts ? getProjectPageCanvasHeight(layouts) : null),
     [layouts],
@@ -89,6 +122,18 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     () =>
       listHidePlan ? new Set(flattenHideSteps(listHidePlan.hideSteps, listHideStep)) : new Set<number>(),
     [listHidePlan, listHideStep],
+  );
+  const isListHideComplete =
+    listHiding && listHidePlan !== null && listHideStep >= listHidePlan.hideSteps.length;
+  const isProjectNavigating = activeTransition !== null;
+  const showProjectMeta = !listOverlayActive || isListHideComplete;
+  const projectMetaClassName = `project-page__meta${showProjectMeta ? '' : ' project-page__meta--hidden'}`;
+  const transitionHiddenIndices = useMemo(
+    () =>
+      activeTransition
+        ? new Set(flattenHideSteps(activeTransition.hideSteps, transitionHideStep))
+        : listHideHiddenIndices,
+    [activeTransition, listHideHiddenIndices, transitionHideStep],
   );
 
   const handleListRevealPlanReady = useCallback((plan: ColumnHidePlan) => {
@@ -182,8 +227,13 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
     isListClosingRef.current = true;
     clearListRevealTimer();
-    setListOverlayFading(false);
     setListHiding(true);
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setListOverlayFading(false);
+      });
+    });
 
     const listItems = layoutRef.current?.querySelectorAll<HTMLElement>('.project-item');
     const hidePlan = buildColumnHidePlan(Array.from(listItems ?? []), -1);
@@ -220,6 +270,180 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       scheduleFinishClose(hideSteps);
     });
   }, [clearListRevealTimer, clearListHideTimer, scheduleFinishClose]);
+
+  const cancelScrollToTop = useCallback(() => {
+    if (scrollToTopFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollToTopFrameRef.current);
+      scrollToTopFrameRef.current = null;
+    }
+  }, []);
+
+  const scrollPageToTop = useCallback(
+    (onComplete?: () => void) => {
+      const page = pageRef.current;
+
+      if (!page) {
+        onComplete?.();
+        return;
+      }
+
+      cancelScrollToTop();
+
+      const startTop = page.scrollTop;
+
+      if (startTop <= 0) {
+        page.scrollTop = 0;
+        onComplete?.();
+        return;
+      }
+
+      const startTime = performance.now();
+
+      const step = (now: number) => {
+        const progress = Math.min((now - startTime) / SCROLL_TO_TOP_MS, 1);
+        const eased = easeInOutCubic(progress);
+        page.scrollTop = startTop * (1 - eased);
+
+        if (progress < 1) {
+          scrollToTopFrameRef.current = window.requestAnimationFrame(step);
+          return;
+        }
+
+        page.scrollTop = 0;
+        scrollToTopFrameRef.current = null;
+        onComplete?.();
+      };
+
+      scrollToTopFrameRef.current = window.requestAnimationFrame(step);
+    },
+    [cancelScrollToTop],
+  );
+
+  const handleCurrentProjectClick = useCallback(() => {
+    if (!listOverlayRef.current || isProjectNavigating) {
+      return;
+    }
+
+    scrollPageToTop();
+
+    if (!isListClosingRef.current) {
+      startCloseListOverlay();
+    }
+  }, [isProjectNavigating, scrollPageToTop, startCloseListOverlay]);
+
+  const clearProjectNavigateTimers = useCallback(() => {
+    if (transitionHideTimerRef.current !== null) {
+      window.clearInterval(transitionHideTimerRef.current);
+      transitionHideTimerRef.current = null;
+    }
+
+    if (navigateTimerRef.current !== null) {
+      window.clearTimeout(navigateTimerRef.current);
+      navigateTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleProjectNavigation = useCallback(
+    (slug: string) => {
+      const elapsed = performance.now() - transitionStartRef.current;
+      const delay = Math.max(PROJECT_TRANSITION_BG_FADE_MS - elapsed, 0);
+
+      navigateTimerRef.current = window.setTimeout(() => {
+        router.push(`/projects/${slug}`);
+      }, delay);
+    },
+    [router],
+  );
+
+  const handleProjectNavigate = useCallback(
+    (
+      targetProject: ProjectListItem,
+      index: number,
+      layout: RandomImageLayout,
+      hidePlan: ColumnHidePlan,
+    ) => {
+      const slug = targetProject.slug;
+
+      if (!slug || isProjectNavigating || listHiding || !listOverlayRef.current) {
+        return;
+      }
+
+      clearListRevealTimer();
+      clearProjectNavigateTimers();
+
+      saveProjectTransition({
+        slug,
+        projectId: targetProject._id,
+        projectIndex: index,
+        layout,
+      });
+
+      router.prefetch(`/projects/${slug}`);
+
+      const { hideSteps, columns } = hidePlan;
+      const transition: ActiveTransition = {
+        slug,
+        projectIndex: index,
+        layout,
+        hideSteps,
+        columns,
+      };
+
+      transitionRef.current = transition;
+      transitionStartRef.current = performance.now();
+      startProjectPageBackgroundTransition();
+      dispatchProjectTransitionStart();
+      setListOverlayFading(false);
+      setActiveTransition(transition);
+      setTransitionHideStep(0);
+
+      if (hideSteps.length === 0) {
+        scheduleProjectNavigation(slug);
+        return;
+      }
+
+      const startHideSequence = () => {
+        setTransitionHideStep(1);
+
+        if (hideSteps.length === 1) {
+          scheduleProjectNavigation(slug);
+          return;
+        }
+
+        transitionHideTimerRef.current = window.setInterval(() => {
+          setTransitionHideStep((currentStep) => {
+            const steps = transitionRef.current?.hideSteps ?? [];
+            const nextStep = currentStep + 1;
+
+            if (nextStep >= steps.length) {
+              if (transitionHideTimerRef.current !== null) {
+                window.clearInterval(transitionHideTimerRef.current);
+                transitionHideTimerRef.current = null;
+              }
+
+              if (transitionRef.current) {
+                scheduleProjectNavigation(transitionRef.current.slug);
+              }
+            }
+
+            return nextStep;
+          });
+        }, PROJECT_NAVIGATE_HIDE_INTERVAL_MS);
+      };
+
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(startHideSequence);
+      });
+    },
+    [
+      clearListRevealTimer,
+      clearProjectNavigateTimers,
+      isProjectNavigating,
+      listHiding,
+      router,
+      scheduleProjectNavigation,
+    ],
+  );
 
   useLayoutEffect(() => {
     if (typeof document === 'undefined') {
@@ -323,7 +547,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
   const handleOverlayScrollUp = useCallback(
     (deltaY: number) => {
-      if (deltaY >= 0 || !listOverlayRef.current) {
+      if (deltaY >= 0 || !listOverlayRef.current || isProjectNavigating) {
         return false;
       }
 
@@ -334,7 +558,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       scrollPageBy(deltaY);
       return true;
     },
-    [scrollPageBy, startCloseListOverlay],
+    [isProjectNavigating, scrollPageBy, startCloseListOverlay],
   );
   const isAtBottom = useCallback(() => {
     const page = pageRef.current;
@@ -462,20 +686,30 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     return () => {
       clearListRevealTimer();
       clearListHideTimer();
+      clearProjectNavigateTimers();
+      cancelScrollToTop();
 
       if (overlayCloseTimerRef.current !== null) {
         window.clearTimeout(overlayCloseTimerRef.current);
       }
     };
-  }, [clearListHideTimer, clearListRevealTimer]);
+  }, [cancelScrollToTop, clearListHideTimer, clearListRevealTimer, clearProjectNavigateTimers]);
 
   return (
     <main
       ref={pageRef}
-      className={`project-page${listOverlayActive ? ' project-page--list-overlay-active' : ''}${listOverlayFading ? ' project-page--list-overlay-visible' : ''}${listHiding ? ' project-page--list-overlay-closing' : ''}`}
+      className={`project-page${listOverlayActive ? ' project-page--list-overlay-active' : ''}${listOverlayFading ? ' project-page--list-overlay-visible' : ''}${listHiding ? ' project-page--list-overlay-closing' : ''}${isProjectNavigating ? ' project-page--navigating' : ''}`}
     >
       {layouts ? (
         <div className="project-page__canvas" style={{ height: `${canvasHeight}px` }}>
+          <header className={projectMetaClassName}>
+            <span className="project-page__indicator text-secondary">
+              {formatProjectMeta(project.category, project.images.length)}
+            </span>
+            <span className="project-page__title text-primary">
+              {project.title} — {project.client}
+            </span>
+          </header>
           {layouts.map((layout, index) => {
             if (fromTransition && index === 0 && !bridgeHandoffComplete) {
               return null;
@@ -497,15 +731,18 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
             );
           })}
         </div>
-      ) : null}
-      <header className="project-page__meta">
-        <span className="project-page__indicator text-secondary">
-          {formatProjectMeta(project.category, project.images.length)}
-        </span>
-        <span className="project-page__title text-primary">
-          {project.title} — {project.client}
-        </span>
-      </header>
+      ) : (
+        <div className="project-page__canvas">
+          <header className={projectMetaClassName}>
+            <span className="project-page__indicator text-secondary">
+              {formatProjectMeta(project.category, project.images.length)}
+            </span>
+            <span className="project-page__title text-primary">
+              {project.title} — {project.client}
+            </span>
+          </header>
+        </div>
+      )}
       {listOverlayActive ? (
         <div
           ref={overlayRef}
@@ -521,9 +758,15 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
               openingRevealPlan={listRevealPlan}
               openingRevealedIndices={listRevealedIndices}
               onOpeningRevealPlanReady={handleListRevealPlanReady}
-              isTransitioning={listHiding}
-              transitionHiddenIndices={listHideHiddenIndices}
-              transitionColumns={listHidePlan?.columns ?? listRevealPlan?.columns ?? null}
+              isTransitioning={listHiding || isProjectNavigating}
+              transitionHiddenIndices={transitionHiddenIndices}
+              transitionColumns={
+                activeTransition?.columns ?? listHidePlan?.columns ?? listRevealPlan?.columns ?? null
+              }
+              transitionTargetIndex={activeTransition?.projectIndex ?? null}
+              onProjectNavigate={handleProjectNavigate}
+              currentProjectSlug={project.slug}
+              onCurrentProjectClick={handleCurrentProjectClick}
             />
           </div>
         </div>

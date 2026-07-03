@@ -4,7 +4,7 @@
 
 export const IMAGE_SIZES_VW = [25, 30, 35] as const;
 export const PAGE_MARGIN_PX = 20;
-export const PROJECT_PAGE_CAPTION_GAP_PX = 10;
+export const PROJECT_PAGE_CAPTION_GAP_PX = 8;
 export const PROJECT_PAGE_CAPTION_LINE_PX = 18;
 export const MAX_OVERLAP_PX = 100;
 export const PLACEMENT_SCAN_STEP_PX = 24;

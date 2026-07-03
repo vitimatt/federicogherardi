@@ -67,6 +67,8 @@ type ProjectListProps = {
     layout: RandomImageLayout,
     hidePlan: ColumnHidePlan,
   ) => void;
+  currentProjectSlug?: string;
+  onCurrentProjectClick?: () => void;
 };
 
 export function ProjectList({
@@ -80,6 +82,8 @@ export function ProjectList({
   transitionColumns = null,
   transitionTargetIndex = null,
   onProjectNavigate,
+  currentProjectSlug,
+  onCurrentProjectClick,
 }: ProjectListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const hoveredProjectRef = useRef<string | null>(null);
@@ -163,15 +167,22 @@ export function ProjectList({
     project: ProjectListItem,
     index: number,
   ) => {
+    if (isTransitioning) {
+      event.preventDefault();
+      return;
+    }
+
+    if (currentProjectSlug && project.slug === currentProjectSlug) {
+      event.preventDefault();
+      onCurrentProjectClick?.();
+      return;
+    }
+
     if (!onProjectNavigate || !project.slug) {
       return;
     }
 
     event.preventDefault();
-
-    if (isTransitioning) {
-      return;
-    }
 
     const activeLayout = hoveredLayouts.find(
       (entry) => entry.projectId === project._id && !entry.exiting,

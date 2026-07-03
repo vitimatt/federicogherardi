@@ -13,13 +13,7 @@ export type HomeLayoutMode = 'single-column' | 'two-column';
 
 export function useHomeLayout(siteInfoRef: RefObject<HTMLElement | null>) {
   const [layoutMode, setLayoutMode] = useState<HomeLayoutMode>('single-column');
-  const [isMobile, setIsMobile] = useState(() => {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-
-    return window.innerWidth <= MOBILE_BREAKPOINT;
-  });
+  const [isMobile, setIsMobile] = useState(false);
 
   useLayoutEffect(() => {
     const update = () => {

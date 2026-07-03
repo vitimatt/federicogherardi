@@ -49,7 +49,7 @@ export const SiteInfo = forwardRef<HTMLDivElement, SiteInfoProps>(function SiteI
   return (
     <div
       ref={ref}
-      className={`site-info ${expanded ? 'site-info--expanded' : ''} ${className ?? ''}`.trim()}
+      className={`site-info ${expanded ? 'site-info--expanded' : ''} ${isMobile ? 'site-info--mobile' : ''} ${className ?? ''}`.trim()}
     >
       <div className="site-info__grid">
         {isMobile ? (

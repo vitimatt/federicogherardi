@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 
 import { ProjectTransitionHero } from '@/app/components/ProjectTransitionHero';
 import {
@@ -11,6 +11,7 @@ import {
 
 export function ProjectTransitionBridge() {
   const [version, setVersion] = useState(0);
+  const [payload, setPayload] = useState<ReturnType<typeof readProjectTransitionPayload>>(null);
 
   useEffect(() => {
     const sync = () => setVersion((current) => current + 1);
@@ -24,9 +25,8 @@ export function ProjectTransitionBridge() {
     };
   }, []);
 
-  const payload = useMemo(() => {
-    void version;
-    return readProjectTransitionPayload();
+  useLayoutEffect(() => {
+    setPayload(readProjectTransitionPayload());
   }, [version]);
 
   if (!payload) {
