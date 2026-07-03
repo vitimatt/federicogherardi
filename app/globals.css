@@ -33,7 +33,7 @@
   html,
   body {
     overscroll-behavior: none;
-    transition: background-color 1000ms ease;
+    transition: background-color var(--project-bg-fade-ms, 1000ms) ease;
   }
 
   html {
@@ -292,7 +292,7 @@
     padding: 0;
     background: #fff;
     overflow-y: auto;
-    transition: background-color 1000ms ease;
+    transition: background-color var(--project-bg-fade-ms, 1000ms) ease;
   }
 
   .project-page--list-overlay-visible {
@@ -407,7 +407,7 @@
 
   .project-page__meta {
     position: relative;
-    z-index: 10;
+    z-index: 20;
     margin: 20px 0 0 20px;
     width: max-content;
     max-width: 304px;
@@ -430,6 +430,7 @@
 
   .project-page__canvas {
     position: relative;
+    display: flow-root;
     width: 100%;
     box-sizing: border-box;
   }
@@ -438,6 +439,12 @@
     position: absolute;
     pointer-events: auto;
     cursor: default;
+  }
+
+  .project-page-image-wrap--handoff-fixed {
+    position: fixed;
+    z-index: 15;
+    pointer-events: none;
   }
 
   .project-page-image-frame {
@@ -565,7 +572,8 @@
   }
 
   .project-item--transition-hidden {
-    display: none;
+    visibility: hidden;
+    pointer-events: none;
   }
 
   .project-columns-transition {

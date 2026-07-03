@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { ProjectHoverImage } from '@/app/components/ProjectHoverImage';
+import { syncLayoutFromDom } from '@/app/lib/imageLayoutCore';
 import { createRandomImageLayout, type RandomImageLayout } from '@/app/lib/randomImageLayout';
 import { formatProjectMeta } from '@/app/lib/formatProjectMeta';
 import { buildColumnHidePlan, buildColumnRevealPlan, type ColumnHidePlan } from '@/app/lib/projectTransition';
@@ -188,12 +189,22 @@ export function ProjectList({
       (entry) => entry.projectId === project._id && !entry.exiting,
     );
 
-    const layout =
+    let layout =
       activeLayout ??
       (project.firstImage ? createRandomImageLayout(project.firstImage, []) : null);
 
     if (!layout) {
       return;
+    }
+
+    if (activeLayout) {
+      const hoverNode = document.querySelector<HTMLElement>(
+        `[data-transition-hover-id="${activeLayout.id}"]`,
+      );
+
+      if (hoverNode) {
+        layout = syncLayoutFromDom(layout, hoverNode);
+      }
     }
 
     const listItems = listRef.current?.querySelectorAll<HTMLElement>('.project-item');

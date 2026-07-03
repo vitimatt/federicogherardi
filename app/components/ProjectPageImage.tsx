@@ -11,6 +11,7 @@ type ProjectPageImageProps = {
   opacityRiseFromHome?: boolean;
   mountDelayMs?: number;
   mountFadeMs?: number;
+  positionFixed?: boolean;
 };
 
 export function ProjectPageImage({
@@ -20,6 +21,7 @@ export function ProjectPageImage({
   opacityRiseFromHome = false,
   mountDelayMs = 0,
   mountFadeMs = 400,
+  positionFixed = false,
 }: ProjectPageImageProps) {
   const { image, isLandscape, top, left, boxWidth, boxHeight, renderWidth, renderHeight } = layout;
   const [mounting, setMounting] = useState(opacityRiseFromHome || !skipMountFade);
@@ -77,7 +79,7 @@ export function ProjectPageImage({
 
   return (
     <div
-      className="project-page-image-wrap"
+      className={`project-page-image-wrap${positionFixed ? ' project-page-image-wrap--handoff-fixed' : ''}`}
       style={{
         top: `${top}px`,
         left: `${left}px`,

@@ -35,6 +35,7 @@ export function ProjectHoverImage({ layout, exiting, onExitComplete }: ProjectHo
         width={image.width}
         height={image.height}
         alt=""
+        data-transition-hover-id={id}
         className={`project-hover-image ${animationClass}`}
         style={{
           top: `${top}px`,
@@ -49,6 +50,7 @@ export function ProjectHoverImage({ layout, exiting, onExitComplete }: ProjectHo
 
   return (
     <div
+      data-transition-hover-id={id}
       className={`project-hover-image-wrap ${animationClass}`}
       style={{
         top: `${top}px`,

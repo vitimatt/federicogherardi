@@ -20,6 +20,7 @@ import {
   PROJECT_TRANSITION_BG_FADE_MS,
   readProjectTransition,
   saveProjectTransition,
+  setProjectPageBackground,
   startProjectPageBackgroundTransition,
   type ColumnHidePlan,
 } from '@/app/lib/projectTransition';
@@ -87,6 +88,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     null,
   );
   const [bridgeHandoffComplete, setBridgeHandoffComplete] = useState(true);
+  const [imageHandoffFixed, setImageHandoffFixed] = useState(false);
   const [secondaryMounting, setSecondaryMounting] = useState(true);
   const [listOverlayActive, setListOverlayActive] = useState(false);
   const [listOverlayFading, setListOverlayFading] = useState(false);
@@ -165,6 +167,23 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     setListHideStep(0);
   }, [clearListHideTimer, clearListRevealTimer]);
 
+  const clearBackgroundFadeDuration = useCallback(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    document.documentElement.style.removeProperty('--project-bg-fade-ms');
+  }, []);
+
+  const beginBackgroundFadeToWhite = useCallback((durationMs: number) => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    document.documentElement.style.setProperty('--project-bg-fade-ms', `${durationMs}ms`);
+    setListOverlayFading(false);
+  }, []);
+
   const finishCloseListOverlay = useCallback(() => {
     isListClosingRef.current = false;
     listOverlayRef.current = false;
@@ -178,7 +197,8 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     setListOverlayActive(false);
     setListOverlayFading(false);
     resetListReveal();
-  }, [clearListHideTimer, resetListReveal]);
+    clearBackgroundFadeDuration();
+  }, [clearBackgroundFadeDuration, clearListHideTimer, resetListReveal]);
 
   const scheduleFinishClose = useCallback(
     (hideSteps: number[][]) => {
@@ -220,22 +240,21 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     });
   }, [resetListReveal]);
 
-  const startCloseListOverlay = useCallback(() => {
-    if (isListClosingRef.current || !listOverlayRef.current) {
-      return;
-    }
+  const startCloseListOverlay = useCallback(
+    (options?: { skipBackgroundFade?: boolean }) => {
+      if (isListClosingRef.current || !listOverlayRef.current) {
+        return;
+      }
 
-    isListClosingRef.current = true;
-    clearListRevealTimer();
-    setListHiding(true);
+      isListClosingRef.current = true;
+      clearListRevealTimer();
+      setListHiding(true);
 
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        setListOverlayFading(false);
-      });
-    });
+      if (!options?.skipBackgroundFade) {
+        beginBackgroundFadeToWhite(PROJECT_TRANSITION_BG_FADE_MS);
+      }
 
-    const listItems = layoutRef.current?.querySelectorAll<HTMLElement>('.project-item');
+      const listItems = layoutRef.current?.querySelectorAll<HTMLElement>('.project-item');
     const hidePlan = buildColumnHidePlan(Array.from(listItems ?? []), -1);
     const { hideSteps } = hidePlan;
 
@@ -269,7 +288,9 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
       scheduleFinishClose(hideSteps);
     });
-  }, [clearListRevealTimer, clearListHideTimer, scheduleFinishClose]);
+    },
+    [beginBackgroundFadeToWhite, clearListRevealTimer, clearListHideTimer, scheduleFinishClose],
+  );
 
   const cancelScrollToTop = useCallback(() => {
     if (scrollToTopFrameRef.current !== null) {
@@ -324,12 +345,22 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       return;
     }
 
+    const page = pageRef.current;
+    const fadeMs =
+      page && page.scrollTop > 0 ? SCROLL_TO_TOP_MS : PROJECT_TRANSITION_BG_FADE_MS;
+
+    beginBackgroundFadeToWhite(fadeMs);
     scrollPageToTop();
 
     if (!isListClosingRef.current) {
-      startCloseListOverlay();
+      startCloseListOverlay({ skipBackgroundFade: true });
     }
-  }, [isProjectNavigating, scrollPageToTop, startCloseListOverlay]);
+  }, [
+    beginBackgroundFadeToWhite,
+    isProjectNavigating,
+    scrollPageToTop,
+    startCloseListOverlay,
+  ]);
 
   const clearProjectNavigateTimers = useCallback(() => {
     if (transitionHideTimerRef.current !== null) {
@@ -467,6 +498,14 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   }, [listOverlayFading]);
 
   useLayoutEffect(() => {
+    if (!fromTransition || !pageRef.current) {
+      return;
+    }
+
+    pageRef.current.scrollTop = 0;
+  }, [fromTransition, project.slug]);
+
+  useLayoutEffect(() => {
     if (!fromTransition || !layouts || secondaryMounting) {
       return;
     }
@@ -480,15 +519,35 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     }
 
     const timer = window.setTimeout(() => {
-      clearProjectTransition();
-      dispatchProjectTransitionEnd();
       setBridgeHandoffComplete(true);
+      setImageHandoffFixed(true);
     }, PROJECT_PAGE_MOUNT_LEAD_MS);
 
     return () => {
       window.clearTimeout(timer);
     };
   }, [fromTransition, layouts, secondaryMounting, bridgeHandoffComplete]);
+
+  useLayoutEffect(() => {
+    if (!imageHandoffFixed) {
+      return;
+    }
+
+    pageRef.current?.scrollTo(0, 0);
+
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        clearProjectTransition();
+        dispatchProjectTransitionEnd();
+        setImageHandoffFixed(false);
+        setProjectPageBackground(true);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [imageHandoffFixed]);
 
   useLayoutEffect(() => {
     if (!listRevealPlan || !isListRevealActive) {
@@ -688,12 +747,19 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       clearListHideTimer();
       clearProjectNavigateTimers();
       cancelScrollToTop();
+      clearBackgroundFadeDuration();
 
       if (overlayCloseTimerRef.current !== null) {
         window.clearTimeout(overlayCloseTimerRef.current);
       }
     };
-  }, [cancelScrollToTop, clearListHideTimer, clearListRevealTimer, clearProjectNavigateTimers]);
+  }, [
+    cancelScrollToTop,
+    clearBackgroundFadeDuration,
+    clearListHideTimer,
+    clearListRevealTimer,
+    clearProjectNavigateTimers,
+  ]);
 
   return (
     <main
@@ -725,6 +791,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
                 layout={layout}
                 caption={String(index + 1).padStart(2, '0')}
                 skipMountFade={Boolean(fromTransition && index === 0)}
+                positionFixed={Boolean(fromTransition && index === 0 && imageHandoffFixed)}
                 mountDelayMs={index > 0 ? (index - 1) * PROJECT_PAGE_MOUNT_STAGGER_MS : 0}
                 mountFadeMs={PROJECT_PAGE_MOUNT_FADE_MS}
               />

@@ -268,6 +268,35 @@ export function withSizeVw(layout: RandomImageLayout, viewportWidth: number): Ra
   };
 }
 
+export function syncLayoutFromDom(layout: RandomImageLayout, node: HTMLElement): RandomImageLayout {
+  const rect = node.getBoundingClientRect();
+  const top = Math.round(rect.top);
+  const left = Math.round(rect.left);
+
+  if (layout.isLandscape) {
+    return {
+      ...layout,
+      top,
+      left,
+      boxWidth: Math.round(rect.width),
+      boxHeight: Math.round(rect.height),
+    };
+  }
+
+  const renderWidth = Math.round(rect.width);
+  const renderHeight = Math.round(renderWidth * (layout.image.height / layout.image.width));
+
+  return {
+    ...layout,
+    top,
+    left,
+    boxWidth: renderWidth,
+    boxHeight: renderHeight,
+    renderWidth,
+    renderHeight,
+  };
+}
+
 export function pickRandom<T>(items: T[]) {
   return items[Math.floor(Math.random() * items.length)]!;
 }
