@@ -6,3 +6,6 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  NEXT_PUBLIC_SANITY_PROJECT_ID = "iyvkkgxs"
+  NEXT_PUBLIC_SANITY_DATASET = "production"
+  NEXT_PUBLIC_SANITY_API_VERSION = "2024-01-01"
