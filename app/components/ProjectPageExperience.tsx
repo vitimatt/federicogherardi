@@ -1,0 +1,533 @@
+'use client';
+
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+
+import { ProjectList, type ProjectListItem } from '@/app/components/ProjectList';
+import { ProjectPageImage } from '@/app/components/ProjectPageImage';
+import { useHomeLayout } from '@/app/hooks/useHomeLayout';
+import { formatProjectMeta } from '@/app/lib/formatProjectMeta';
+import {
+  buildProjectPageImageLayouts,
+  getProjectPageCanvasHeight,
+} from '@/app/lib/projectPageImageLayout';
+import {
+  buildColumnHidePlan,
+  clearProjectTransition,
+  dispatchProjectTransitionEnd,
+  flattenHideSteps,
+  PROJECT_TRANSITION_BG_FADE_MS,
+  readProjectTransition,
+  type ColumnHidePlan,
+} from '@/app/lib/projectTransition';
+
+type ProjectImage = {
+  url: string;
+  width: number;
+  height: number;
+};
+
+type Project = {
+  _id: string;
+  title: string;
+  slug: string;
+  category: string;
+  client: string;
+  images: ProjectImage[];
+};
+
+type ProjectPageExperienceProps = {
+  project: Project;
+  projects: ProjectListItem[];
+};
+
+const PROJECT_PAGE_MOUNT_FADE_MS = 800;
+const PROJECT_PAGE_MOUNT_STAGGER_MS = 50;
+const PROJECT_PAGE_MOUNT_LEAD_MS = 250;
+const SCROLL_BOTTOM_THRESHOLD_PX = 1;
+const LIST_REVEAL_INTERVAL_MS = 80;
+const LIST_HIDE_INTERVAL_MS = 80;
+
+export function ProjectPageExperience({ project, projects }: ProjectPageExperienceProps) {
+  const pageRef = useRef<HTMLElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const listOverlayRef = useRef(false);
+  const isListClosingRef = useRef(false);
+  const revealTimerRef = useRef<number | null>(null);
+  const hideTimerRef = useRef<number | null>(null);
+  const overlayCloseTimerRef = useRef<number | null>(null);
+  const [fromTransition] = useState(() => readProjectTransition(project.slug));
+  const [listOverlayActive, setListOverlayActive] = useState(false);
+  const [listOverlayFading, setListOverlayFading] = useState(false);
+  const [listRevealPlan, setListRevealPlan] = useState<ColumnHidePlan | null>(null);
+  const [listRevealStep, setListRevealStep] = useState(0);
+  const [listRevealComplete, setListRevealComplete] = useState(false);
+  const [listHiding, setListHiding] = useState(false);
+  const [listHidePlan, setListHidePlan] = useState<ColumnHidePlan | null>(null);
+  const [listHideStep, setListHideStep] = useState(0);
+  const [bridgeHandoffComplete, setBridgeHandoffComplete] = useState(!fromTransition);
+  const [secondaryMounting, setSecondaryMounting] = useState(!fromTransition);
+  const { layoutMode, isMobile } = useHomeLayout(layoutRef);
+  const layouts = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+
+    return buildProjectPageImageLayouts(project.images, fromTransition?.layout ?? null);
+  }, [project.images, fromTransition]);
+  const canvasHeight = useMemo(
+    () => (layouts ? getProjectPageCanvasHeight(layouts) : null),
+    [layouts],
+  );
+  const isListRevealActive = listOverlayActive && !listRevealComplete && !listHiding;
+  const listRevealedIndices = useMemo(
+    () =>
+      listRevealPlan ? new Set(flattenHideSteps(listRevealPlan.hideSteps, listRevealStep)) : null,
+    [listRevealPlan, listRevealStep],
+  );
+  const listHideHiddenIndices = useMemo(
+    () =>
+      listHidePlan ? new Set(flattenHideSteps(listHidePlan.hideSteps, listHideStep)) : new Set<number>(),
+    [listHidePlan, listHideStep],
+  );
+
+  const handleListRevealPlanReady = useCallback((plan: ColumnHidePlan) => {
+    setListRevealPlan((currentPlan) => currentPlan ?? plan);
+  }, []);
+
+  const clearListRevealTimer = useCallback(() => {
+    if (revealTimerRef.current !== null) {
+      window.clearInterval(revealTimerRef.current);
+      revealTimerRef.current = null;
+    }
+  }, []);
+
+  const clearListHideTimer = useCallback(() => {
+    if (hideTimerRef.current !== null) {
+      window.clearInterval(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+
+  const resetListReveal = useCallback(() => {
+    clearListRevealTimer();
+    clearListHideTimer();
+    setListRevealPlan(null);
+    setListRevealStep(0);
+    setListRevealComplete(false);
+    setListHiding(false);
+    setListHidePlan(null);
+    setListHideStep(0);
+  }, [clearListHideTimer, clearListRevealTimer]);
+
+  const finishCloseListOverlay = useCallback(() => {
+    isListClosingRef.current = false;
+    listOverlayRef.current = false;
+    clearListHideTimer();
+
+    if (overlayCloseTimerRef.current !== null) {
+      window.clearTimeout(overlayCloseTimerRef.current);
+      overlayCloseTimerRef.current = null;
+    }
+
+    setListOverlayActive(false);
+    setListOverlayFading(false);
+    resetListReveal();
+  }, [clearListHideTimer, resetListReveal]);
+
+  const scheduleFinishClose = useCallback(
+    (hideSteps: number[][]) => {
+      if (overlayCloseTimerRef.current !== null) {
+        window.clearTimeout(overlayCloseTimerRef.current);
+      }
+
+      const hideDuration =
+        hideSteps.length <= 1 ? 0 : (hideSteps.length - 1) * LIST_HIDE_INTERVAL_MS;
+      const totalCloseMs = Math.max(hideDuration, PROJECT_TRANSITION_BG_FADE_MS);
+
+      overlayCloseTimerRef.current = window.setTimeout(() => {
+        finishCloseListOverlay();
+      }, totalCloseMs);
+    },
+    [finishCloseListOverlay],
+  );
+
+  const openListOverlay = useCallback(() => {
+    if (listOverlayRef.current) {
+      return;
+    }
+
+    if (overlayCloseTimerRef.current !== null) {
+      window.clearTimeout(overlayCloseTimerRef.current);
+      overlayCloseTimerRef.current = null;
+    }
+
+    listOverlayRef.current = true;
+    isListClosingRef.current = false;
+    resetListReveal();
+    setListOverlayActive(true);
+    setListOverlayFading(false);
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setListOverlayFading(true);
+      });
+    });
+  }, [resetListReveal]);
+
+  const startCloseListOverlay = useCallback(() => {
+    if (isListClosingRef.current || !listOverlayRef.current) {
+      return;
+    }
+
+    isListClosingRef.current = true;
+    clearListRevealTimer();
+    setListOverlayFading(false);
+    setListHiding(true);
+
+    const listItems = layoutRef.current?.querySelectorAll<HTMLElement>('.project-item');
+    const hidePlan = buildColumnHidePlan(Array.from(listItems ?? []), -1);
+    const { hideSteps } = hidePlan;
+
+    setListHidePlan(hidePlan);
+    setListHideStep(0);
+
+    if (hideSteps.length === 0) {
+      scheduleFinishClose(hideSteps);
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      setListHideStep(1);
+
+      if (hideSteps.length === 1) {
+        scheduleFinishClose(hideSteps);
+        return;
+      }
+
+      hideTimerRef.current = window.setInterval(() => {
+        setListHideStep((currentStep) => {
+          const nextStep = currentStep + 1;
+
+          if (nextStep >= hideSteps.length) {
+            clearListHideTimer();
+          }
+
+          return nextStep;
+        });
+      }, LIST_HIDE_INTERVAL_MS);
+
+      scheduleFinishClose(hideSteps);
+    });
+  }, [clearListRevealTimer, clearListHideTimer, scheduleFinishClose]);
+
+  useLayoutEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const className = 'body--project-page-list-black';
+
+    if (listOverlayFading) {
+      document.documentElement.classList.add(className);
+      document.body.classList.add(className);
+    } else {
+      document.documentElement.classList.remove(className);
+      document.body.classList.remove(className);
+    }
+
+    return () => {
+      document.documentElement.classList.remove(className);
+      document.body.classList.remove(className);
+    };
+  }, [listOverlayFading]);
+
+  useLayoutEffect(() => {
+    if (!fromTransition || !layouts || secondaryMounting) {
+      return;
+    }
+
+    setSecondaryMounting(true);
+  }, [fromTransition, layouts, secondaryMounting]);
+
+  useLayoutEffect(() => {
+    if (!fromTransition || !layouts || !secondaryMounting || bridgeHandoffComplete) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      clearProjectTransition();
+      dispatchProjectTransitionEnd();
+      setBridgeHandoffComplete(true);
+    }, PROJECT_PAGE_MOUNT_LEAD_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [fromTransition, layouts, secondaryMounting, bridgeHandoffComplete]);
+
+  useLayoutEffect(() => {
+    if (!listRevealPlan || !isListRevealActive) {
+      return;
+    }
+
+    if (listRevealPlan.hideSteps.length === 0) {
+      setListRevealComplete(true);
+      return;
+    }
+
+    setListRevealStep(1);
+  }, [isListRevealActive, listRevealPlan]);
+
+  useEffect(() => {
+    if (!listRevealPlan || !isListRevealActive) {
+      return;
+    }
+
+    const { hideSteps } = listRevealPlan;
+
+    if (hideSteps.length <= 1) {
+      if (hideSteps.length === 1) {
+        setListRevealComplete(true);
+      }
+      return;
+    }
+
+    revealTimerRef.current = window.setInterval(() => {
+      setListRevealStep((currentStep) => {
+        const nextStep = currentStep + 1;
+
+        if (nextStep >= hideSteps.length) {
+          clearListRevealTimer();
+          setListRevealComplete(true);
+        }
+
+        return nextStep;
+      });
+    }, LIST_REVEAL_INTERVAL_MS);
+
+    return () => {
+      clearListRevealTimer();
+    };
+  }, [clearListRevealTimer, isListRevealActive, listRevealPlan]);
+
+  const scrollPageBy = useCallback((deltaY: number) => {
+    const page = pageRef.current;
+
+    if (!page) {
+      return;
+    }
+
+    page.scrollTop = Math.max(0, page.scrollTop + deltaY);
+  }, []);
+
+  const handleOverlayScrollUp = useCallback(
+    (deltaY: number) => {
+      if (deltaY >= 0 || !listOverlayRef.current) {
+        return false;
+      }
+
+      if (!isListClosingRef.current) {
+        startCloseListOverlay();
+      }
+
+      scrollPageBy(deltaY);
+      return true;
+    },
+    [scrollPageBy, startCloseListOverlay],
+  );
+  const isAtBottom = useCallback(() => {
+    const page = pageRef.current;
+
+    if (!page) {
+      return false;
+    }
+
+    const maxScrollTop = Math.max(0, page.scrollHeight - page.clientHeight);
+
+    if (maxScrollTop <= SCROLL_BOTTOM_THRESHOLD_PX) {
+      return true;
+    }
+
+    return page.scrollTop >= maxScrollTop - SCROLL_BOTTOM_THRESHOLD_PX;
+  }, []);
+
+  useEffect(() => {
+    const page = pageRef.current;
+
+    if (!page) {
+      return;
+    }
+
+    let lastTouchY = 0;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (listOverlayRef.current) {
+        if (handleOverlayScrollUp(event.deltaY)) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (event.deltaY <= 0 || !isAtBottom()) {
+        return;
+      }
+
+      event.preventDefault();
+      openListOverlay();
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      lastTouchY = event.touches[0]?.clientY ?? 0;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      const currentY = event.touches[0]?.clientY ?? lastTouchY;
+      const deltaY = lastTouchY - currentY;
+      lastTouchY = currentY;
+
+      if (listOverlayRef.current) {
+        if (deltaY >= 0) {
+          return;
+        }
+
+        handleOverlayScrollUp(deltaY);
+        event.preventDefault();
+        return;
+      }
+
+      if (deltaY <= 0 || !isAtBottom()) {
+        return;
+      }
+
+      event.preventDefault();
+      openListOverlay();
+    };
+
+    page.addEventListener('wheel', handleWheel, { passive: false });
+    page.addEventListener('touchstart', handleTouchStart, { passive: true });
+    page.addEventListener('touchmove', handleTouchMove, { passive: false });
+
+    return () => {
+      page.removeEventListener('wheel', handleWheel);
+      page.removeEventListener('touchstart', handleTouchStart);
+      page.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, [handleOverlayScrollUp, isAtBottom, openListOverlay]);
+
+  useEffect(() => {
+    const overlay = overlayRef.current;
+
+    if (!overlay || !listOverlayActive) {
+      return;
+    }
+
+    let lastTouchY = 0;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (handleOverlayScrollUp(event.deltaY)) {
+        event.preventDefault();
+      }
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      lastTouchY = event.touches[0]?.clientY ?? 0;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      const currentY = event.touches[0]?.clientY ?? lastTouchY;
+      const deltaY = lastTouchY - currentY;
+      lastTouchY = currentY;
+
+      if (deltaY >= 0) {
+        return;
+      }
+
+      handleOverlayScrollUp(deltaY);
+      event.preventDefault();
+    };
+
+    overlay.addEventListener('wheel', handleWheel, { passive: false });
+    overlay.addEventListener('touchstart', handleTouchStart, { passive: true });
+    overlay.addEventListener('touchmove', handleTouchMove, { passive: false });
+
+    return () => {
+      overlay.removeEventListener('wheel', handleWheel);
+      overlay.removeEventListener('touchstart', handleTouchStart);
+      overlay.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, [handleOverlayScrollUp, listOverlayActive]);
+
+  useEffect(() => {
+    return () => {
+      clearListRevealTimer();
+      clearListHideTimer();
+
+      if (overlayCloseTimerRef.current !== null) {
+        window.clearTimeout(overlayCloseTimerRef.current);
+      }
+    };
+  }, [clearListHideTimer, clearListRevealTimer]);
+
+  return (
+    <main
+      ref={pageRef}
+      className={`project-page${listOverlayActive ? ' project-page--list-overlay-active' : ''}${listOverlayFading ? ' project-page--list-overlay-visible' : ''}${listHiding ? ' project-page--list-overlay-closing' : ''}`}
+    >
+      {layouts ? (
+        <div className="project-page__canvas" style={{ height: `${canvasHeight}px` }}>
+          {layouts.map((layout, index) => {
+            if (fromTransition && index === 0 && !bridgeHandoffComplete) {
+              return null;
+            }
+
+            if (fromTransition && index > 0 && !secondaryMounting) {
+              return null;
+            }
+
+            return (
+              <ProjectPageImage
+                key={layout.image.url}
+                layout={layout}
+                caption={String(index + 1).padStart(2, '0')}
+                skipMountFade={Boolean(fromTransition && index === 0)}
+                mountDelayMs={index > 0 ? (index - 1) * PROJECT_PAGE_MOUNT_STAGGER_MS : 0}
+                mountFadeMs={PROJECT_PAGE_MOUNT_FADE_MS}
+              />
+            );
+          })}
+        </div>
+      ) : null}
+      <header className="project-page__meta">
+        <span className="project-page__indicator text-secondary">
+          {formatProjectMeta(project.category, project.images.length)}
+        </span>
+        <span className="project-page__title text-primary">
+          {project.title} — {project.client}
+        </span>
+      </header>
+      {listOverlayActive ? (
+        <div
+          ref={overlayRef}
+          className={`project-page__list-overlay${listOverlayFading ? ' project-page__list-overlay--visible' : ''}${listHiding ? ' project-page__list-overlay--closing' : ''}`}
+        >
+          <div
+            ref={layoutRef}
+            className={`project-page__list-layout project-page__list-layout--${layoutMode} ${isMobile ? 'project-page__list-layout--mobile' : ''}`}
+          >
+            <ProjectList
+              projects={projects}
+              isOpeningReveal={isListRevealActive}
+              openingRevealPlan={listRevealPlan}
+              openingRevealedIndices={listRevealedIndices}
+              onOpeningRevealPlanReady={handleListRevealPlanReady}
+              isTransitioning={listHiding}
+              transitionHiddenIndices={listHideHiddenIndices}
+              transitionColumns={listHidePlan?.columns ?? listRevealPlan?.columns ?? null}
+            />
+          </div>
+        </div>
+      ) : null}
+    </main>
+  );
+}
