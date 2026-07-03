@@ -17,6 +17,9 @@
     "sanity": "^3.93.0",
     "styled-components": "^6.1.18"
   },
+  "overrides": {
+    "bare-fs": "4.7.2"
+  },
   "devDependencies": {
     "@netlify/plugin-nextjs": "^5.11.4",
     "@types/node": "^20.17.57",
