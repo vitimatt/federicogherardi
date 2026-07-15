@@ -3,7 +3,7 @@
  * ---------------------------
  *
  * SIZING
- * - Random size from 25, 30, or 35 vw (short side).
+ * - Random size from 25, 30, or 35 vw on desktop (50, 60, or 70 vw on mobile).
  * - Landscape images are rotated 90° inside their bounding box.
  * - Scaled to fit the viewport.
  *
@@ -21,8 +21,8 @@ import {
   getOverlap,
   getRandomPosition,
   getRecentRects,
+  getSmallestImageSizeVw,
   hasTripleOverlap,
-  IMAGE_SIZES_VW,
   isLandscapeImage,
   MAX_OVERLAP_PX,
   PAGE_MARGIN_PX,
@@ -178,8 +178,9 @@ export function createRandomImageLayout(
   const viewportHeight = window.innerHeight;
   const isLandscape = isLandscapeImage(image);
   const previousRects = getRecentRects(previousLayouts);
-  const sizes = shuffleSizes();
+  const sizes = shuffleSizes(viewportWidth);
   const sizesToTry = previousRects.length > 0 ? [...sizes].sort((a, b) => a - b) : sizes;
+  const smallestSizeVw = getSmallestImageSizeVw(viewportWidth);
 
   for (const sizeVw of sizesToTry) {
     const bounds = scaleBoundsToFitViewport(
@@ -196,7 +197,7 @@ export function createRandomImageLayout(
 
   if (previousRects.length > 0) {
     const smallestBounds = scaleBoundsToFitViewport(
-      getImageBounds(image, IMAGE_SIZES_VW[0], isLandscape, viewportWidth),
+      getImageBounds(image, smallestSizeVw, isLandscape, viewportWidth),
       viewportWidth,
       viewportHeight,
     );
@@ -211,7 +212,7 @@ export function createRandomImageLayout(
       );
 
       if (constrainedPlacement) {
-        return buildLayout(image, smallestBounds, constrainedPlacement, isLandscape, IMAGE_SIZES_VW[0]);
+        return buildLayout(image, smallestBounds, constrainedPlacement, isLandscape, smallestSizeVw);
       }
     }
 
@@ -224,13 +225,13 @@ export function createRandomImageLayout(
       );
 
       if (isValidPlacement(rectFromPlacement(smallestBounds, anchoredPlacement), previousRects)) {
-        return buildLayout(image, smallestBounds, anchoredPlacement, isLandscape, IMAGE_SIZES_VW[0]);
+        return buildLayout(image, smallestBounds, anchoredPlacement, isLandscape, smallestSizeVw);
       }
     }
   }
 
   const fallbackBounds = scaleBoundsToFitViewport(
-    getImageBounds(image, IMAGE_SIZES_VW[0], isLandscape, viewportWidth),
+    getImageBounds(image, smallestSizeVw, isLandscape, viewportWidth),
     viewportWidth,
     viewportHeight,
   );
@@ -240,6 +241,6 @@ export function createRandomImageLayout(
     fallbackBounds,
     getRandomPosition(fallbackBounds, viewportWidth, viewportHeight),
     isLandscape,
-    IMAGE_SIZES_VW[0],
+    smallestSizeVw,
   );
 }

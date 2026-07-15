@@ -5,15 +5,20 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { OpeningScreen } from '@/app/components/OpeningScreen';
 import { ProjectList, type ProjectListItem } from '@/app/components/ProjectList';
+import { SiteInfo } from '@/app/components/SiteInfo';
 import { useSiteInfo } from '@/app/components/SiteInfoProvider';
 import {
+  buildSequentialRevealSteps,
   dispatchProjectTransitionStart,
   flattenHideSteps,
+  getProjectHideStepForCombinedStep,
+  getSiteInfoTransitionHiddenIndices,
   PROJECT_TRANSITION_BG_FADE_MS,
   saveProjectTransition,
   startProjectPageBackgroundTransition,
   type ColumnHidePlan,
 } from '@/app/lib/projectTransition';
+import { getSiteInfoInlineSectionCount } from '@/app/lib/siteInformation';
 import type { RandomImageLayout } from '@/app/lib/randomImageLayout';
 
 type OpeningImage = {
@@ -43,11 +48,12 @@ type ActiveTransition = {
 export function HomeExperience({ openingImage, projects }: HomeExperienceProps) {
   const router = useRouter();
   const revealTimerRef = useRef<number | null>(null);
+  const siteInfoRevealTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const navigateTimerRef = useRef<number | null>(null);
   const transitionRef = useRef<ActiveTransition | null>(null);
   const transitionStartRef = useRef<number>(0);
-  const { layoutMode, isMobile, setTransitionHidden } = useSiteInfo();
+  const { layoutMode, isMobile, information, setTransitionHidden } = useSiteInfo();
   const hasOpening = Boolean(openingImage);
   const [openingVisible, setOpeningVisible] = useState(hasOpening);
   const [openingFading, setOpeningFading] = useState(false);
@@ -56,8 +62,14 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
   const [openingRevealComplete, setOpeningRevealComplete] = useState(!hasOpening);
   const [activeTransition, setActiveTransition] = useState<ActiveTransition | null>(null);
   const [transitionHideStep, setTransitionHideStep] = useState(0);
+  const [siteInfoRevealStep, setSiteInfoRevealStep] = useState(0);
+  const [siteInfoRevealComplete, setSiteInfoRevealComplete] = useState(!hasOpening);
 
   const isTransitioning = activeTransition !== null;
+  const siteInfoSectionCount = useMemo(
+    () => (isMobile ? getSiteInfoInlineSectionCount(information) : 0),
+    [information, isMobile],
+  );
   const isOpeningReveal = hasOpening && !openingVisible && !openingRevealComplete && !isTransitioning;
   const openingRevealedIndices = useMemo(
     () =>
@@ -72,8 +84,43 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
   }, []);
 
   const transitionHiddenIndices = new Set(
-    activeTransition ? flattenHideSteps(activeTransition.hideSteps, transitionHideStep) : [],
+    activeTransition
+      ? flattenHideSteps(
+          activeTransition.hideSteps,
+          getProjectHideStepForCombinedStep(transitionHideStep, siteInfoSectionCount),
+        )
+      : [],
   );
+
+  const siteInfoStaggerHiddenIndices =
+    isMobile && isTransitioning && transitionHideStep > 0
+      ? getSiteInfoTransitionHiddenIndices(siteInfoSectionCount, transitionHideStep)
+      : null;
+
+  const siteInfoStaggerRevealedIndices = useMemo(() => {
+    if (!isMobile || isTransitioning) {
+      return null;
+    }
+
+    if (isOpeningReveal) {
+      return new Set<number>();
+    }
+
+    if (siteInfoRevealComplete) {
+      return null;
+    }
+
+    return new Set(
+      flattenHideSteps(buildSequentialRevealSteps(siteInfoSectionCount), siteInfoRevealStep),
+    );
+  }, [
+    isMobile,
+    isOpeningReveal,
+    isTransitioning,
+    siteInfoRevealComplete,
+    siteInfoRevealStep,
+    siteInfoSectionCount,
+  ]);
 
   useEffect(() => {
     setTransitionHidden(transitionHideStep > 0);
@@ -82,6 +129,13 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
       setTransitionHidden(false);
     };
   }, [setTransitionHidden, transitionHideStep]);
+
+  const clearSiteInfoRevealTimer = () => {
+    if (siteInfoRevealTimerRef.current !== null) {
+      window.clearInterval(siteInfoRevealTimerRef.current);
+      siteInfoRevealTimerRef.current = null;
+    }
+  };
 
   const clearTransitionTimers = () => {
     if (hideTimerRef.current !== null) {
@@ -176,7 +230,48 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
   }, [openingRevealPlan, isOpeningReveal]);
 
   useEffect(() => {
+    if (!isMobile || isTransitioning) {
+      return;
+    }
+
+    if (!openingRevealComplete || siteInfoRevealComplete) {
+      return;
+    }
+
+    if (siteInfoSectionCount <= 1) {
+      setSiteInfoRevealComplete(true);
+      return;
+    }
+
+    setSiteInfoRevealStep(1);
+
+    siteInfoRevealTimerRef.current = window.setInterval(() => {
+      setSiteInfoRevealStep((currentStep) => {
+        const nextStep = currentStep + 1;
+
+        if (nextStep >= siteInfoSectionCount) {
+          clearSiteInfoRevealTimer();
+          setSiteInfoRevealComplete(true);
+        }
+
+        return nextStep;
+      });
+    }, PROJECT_REVEAL_INTERVAL_MS);
+
     return () => {
+      clearSiteInfoRevealTimer();
+    };
+  }, [
+    isMobile,
+    isTransitioning,
+    openingRevealComplete,
+    siteInfoRevealComplete,
+    siteInfoSectionCount,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      clearSiteInfoRevealTimer();
       clearTransitionTimers();
     };
   }, []);
@@ -203,6 +298,10 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
       projectId: project._id,
       projectIndex: index,
       layout,
+      category: project.category,
+      title: project.title,
+      client: project.client,
+      imageCount: project.imageCount,
     });
 
     router.prefetch(`/projects/${slug}`);
@@ -222,9 +321,13 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
     dispatchProjectTransitionStart();
     setActiveTransition(transition);
     clearTransitionTimers();
+    clearSiteInfoRevealTimer();
     setTransitionHideStep(0);
 
-    if (hideSteps.length === 0) {
+    const mobileSiteInfoSectionCount = isMobile ? getSiteInfoInlineSectionCount(information) : 0;
+    const totalHideSteps = mobileSiteInfoSectionCount + hideSteps.length;
+
+    if (totalHideSteps === 0) {
       scheduleNavigation(slug);
       return;
     }
@@ -232,17 +335,18 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
     const startHideSequence = () => {
       setTransitionHideStep(1);
 
-      if (hideSteps.length === 1) {
+      if (totalHideSteps === 1) {
         scheduleNavigation(slug);
         return;
       }
 
       hideTimerRef.current = window.setInterval(() => {
         setTransitionHideStep((currentStep) => {
-          const steps = transitionRef.current?.hideSteps ?? [];
           const nextStep = currentStep + 1;
+          const steps =
+            (transitionRef.current?.hideSteps.length ?? 0) + mobileSiteInfoSectionCount;
 
-          if (nextStep >= steps.length) {
+          if (nextStep >= steps) {
             if (hideTimerRef.current !== null) {
               window.clearInterval(hideTimerRef.current);
               hideTimerRef.current = null;
@@ -269,20 +373,32 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
         <OpeningScreen image={openingImage} fading={openingFading} />
       ) : null}
       <main
-        className={`home-layout home-layout--${layoutMode} ${isMobile ? 'home-layout--mobile' : ''} ${isTransitioning ? 'home-layout--transitioning' : ''} relative z-10 min-h-screen bg-black p-5 ${hasOpening && openingVisible ? 'invisible' : ''}`}
+        className={`home-layout home-layout--${layoutMode} ${isMobile ? 'home-layout--mobile py-5 px-0' : 'p-5'} ${isTransitioning ? 'home-layout--transitioning' : ''} relative z-10 min-h-screen bg-black ${hasOpening && openingVisible ? 'invisible' : ''}`}
       >
-        <ProjectList
-          projects={projects}
-          isOpeningReveal={isOpeningReveal}
-          openingRevealPlan={openingRevealPlan}
-          openingRevealedIndices={openingRevealedIndices}
-          onOpeningRevealPlanReady={handleOpeningRevealPlanReady}
-          isTransitioning={isTransitioning}
-          transitionHiddenIndices={transitionHiddenIndices}
-          transitionColumns={activeTransition?.columns ?? null}
-          transitionTargetIndex={activeTransition?.projectIndex ?? null}
-          onProjectNavigate={handleProjectNavigate}
-        />
+        <div className="home-layout__projects">
+          <ProjectList
+            projects={projects}
+            isOpeningReveal={isOpeningReveal}
+            openingRevealPlan={openingRevealPlan}
+            openingRevealedIndices={openingRevealedIndices}
+            onOpeningRevealPlanReady={handleOpeningRevealPlanReady}
+            isTransitioning={isTransitioning}
+            transitionHiddenIndices={transitionHiddenIndices}
+            transitionColumns={activeTransition?.columns ?? null}
+            transitionTargetIndex={activeTransition?.projectIndex ?? null}
+            onProjectNavigate={handleProjectNavigate}
+            isMobile={isMobile}
+          />
+          {isMobile ? (
+            <SiteInfo
+              information={information}
+              isMobile
+              placement="inline"
+              staggerRevealedIndices={siteInfoStaggerRevealedIndices}
+              staggerHiddenIndices={siteInfoStaggerHiddenIndices}
+            />
+          ) : null}
+        </div>
       </main>
     </>
   );

@@ -3,6 +3,8 @@
  */
 
 export const IMAGE_SIZES_VW = [25, 30, 35] as const;
+export const MOBILE_IMAGE_SIZES_VW = [50, 60, 70] as const;
+export const MOBILE_BREAKPOINT = 768;
 export const PAGE_MARGIN_PX = 20;
 export const PROJECT_PAGE_CAPTION_GAP_PX = 8;
 export const PROJECT_PAGE_CAPTION_LINE_PX = 18;
@@ -51,8 +53,20 @@ export type Placement = {
   left: number;
 };
 
-export function shuffleSizes() {
-  return [...IMAGE_SIZES_VW].sort(() => Math.random() - 0.5);
+export function isMobileViewport(viewportWidth = typeof window === 'undefined' ? 1024 : window.innerWidth) {
+  return viewportWidth <= MOBILE_BREAKPOINT;
+}
+
+export function getImageSizesVw(viewportWidth = typeof window === 'undefined' ? 1024 : window.innerWidth) {
+  return isMobileViewport(viewportWidth) ? MOBILE_IMAGE_SIZES_VW : IMAGE_SIZES_VW;
+}
+
+export function getSmallestImageSizeVw(viewportWidth = typeof window === 'undefined' ? 1024 : window.innerWidth) {
+  return getImageSizesVw(viewportWidth)[0];
+}
+
+export function shuffleSizes(viewportWidth = typeof window === 'undefined' ? 1024 : window.innerWidth) {
+  return [...getImageSizesVw(viewportWidth)].sort(() => Math.random() - 0.5);
 }
 
 export function isLandscapeImage(image: ProjectImage) {
@@ -255,9 +269,11 @@ export function buildLayout(
 export function inferSizeVw(layout: RandomImageLayout, viewportWidth: number) {
   const reference = layout.isLandscape ? layout.renderHeight : layout.renderWidth;
   const vw = (reference / viewportWidth) * 100;
+  const sizes = getImageSizesVw(viewportWidth);
 
-  return IMAGE_SIZES_VW.reduce((closest, size) =>
-    Math.abs(size - vw) < Math.abs(closest - vw) ? size : closest,
+  return sizes.reduce(
+    (closest, size) => (Math.abs(size - vw) < Math.abs(closest - vw) ? size : closest),
+    sizes[0],
   );
 }
 

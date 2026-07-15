@@ -14,7 +14,7 @@
  *     • strong horizontal overlap (100–300 px) + weak vertical (10–50 px)
  *
  * SIZING
- * - Random size from 25, 30, or 35 vw (short side).
+ * - Random size from 25, 30, or 35 vw on desktop (50, 60, or 70 vw on mobile).
  * - Landscape images rotated 90°.
  * - Never 3 consecutive images at the same size.
  * - Width must fit viewport margins; height extends the scrollable page.
@@ -24,7 +24,7 @@ import {
   buildLayout,
   getImageBounds,
   getOverlap,
-  IMAGE_SIZES_VW,
+  getSmallestImageSizeVw,
   isLandscapeImage,
   PAGE_MARGIN_PX,
   PROJECT_PAGE_CAPTION_GAP_PX,
@@ -313,8 +313,9 @@ export function createProjectPageImageLayout(
   const referenceRect = layoutToRect(reference);
 
   const candidates: RandomImageLayout[] = [];
+  const smallestSizeVw = getSmallestImageSizeVw(viewportWidth);
 
-  for (const sizeVw of shuffleSizes()) {
+  for (const sizeVw of shuffleSizes(viewportWidth)) {
     const bounds = scaleBoundsToFitWidth(
       getImageBounds(image, sizeVw, isLandscape, viewportWidth),
       viewportWidth,
@@ -335,7 +336,7 @@ export function createProjectPageImageLayout(
   }
 
   const fallbackBounds = scaleBoundsToFitWidth(
-    getImageBounds(image, IMAGE_SIZES_VW[0], isLandscape, viewportWidth),
+    getImageBounds(image, smallestSizeVw, isLandscape, viewportWidth),
     viewportWidth,
   );
 
@@ -343,7 +344,7 @@ export function createProjectPageImageLayout(
     const placement = createColumnPlacement(fallbackBounds, referenceRect, viewportWidth);
 
     if (placement) {
-      return buildLayout(image, fallbackBounds, placement, isLandscape, IMAGE_SIZES_VW[0]);
+      return buildLayout(image, fallbackBounds, placement, isLandscape, smallestSizeVw);
     }
   }
 
@@ -357,7 +358,7 @@ export function createProjectPageImageLayout(
       );
 
       if (placement) {
-        return buildLayout(image, fallbackBounds, placement, isLandscape, IMAGE_SIZES_VW[0]);
+        return buildLayout(image, fallbackBounds, placement, isLandscape, smallestSizeVw);
       }
     }
   }
@@ -380,7 +381,7 @@ export function createProjectPageImageLayout(
       fallbackBounds,
       { left, top },
       isLandscape,
-      IMAGE_SIZES_VW[0],
+      smallestSizeVw,
     );
   }
 
@@ -404,7 +405,7 @@ export function createProjectPageImageLayout(
     fallbackBounds,
     { left: leftShifted, top: verticalTop },
     isLandscape,
-    IMAGE_SIZES_VW[0],
+    smallestSizeVw,
   );
 }
 

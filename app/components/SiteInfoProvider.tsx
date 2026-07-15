@@ -18,6 +18,8 @@ type SiteInfoContextValue = {
   siteInfoRef: RefObject<HTMLDivElement | null>;
   layoutMode: HomeLayoutMode;
   isMobile: boolean;
+  information?: SiteInformation | null;
+  transitionHidden: boolean;
   setTransitionHidden: Dispatch<SetStateAction<boolean>>;
 };
 
@@ -32,17 +34,20 @@ export function SiteInfoProvider({ information, children }: SiteInfoProviderProp
   const siteInfoRef = useRef<HTMLDivElement>(null);
   const [transitionHidden, setTransitionHidden] = useState(false);
   const { layoutMode, isMobile } = useHomeLayout(siteInfoRef);
+  const showFixedSiteInfo = !isMobile;
 
   return (
     <SiteInfoContext.Provider
-      value={{ siteInfoRef, layoutMode, isMobile, setTransitionHidden }}
+      value={{ siteInfoRef, layoutMode, isMobile, information, transitionHidden, setTransitionHidden }}
     >
-      <SiteInfo
-        ref={siteInfoRef}
-        information={information}
-        isMobile={isMobile}
-        className={transitionHidden ? 'site-info--transition-hidden' : undefined}
-      />
+      {showFixedSiteInfo ? (
+        <SiteInfo
+          ref={siteInfoRef}
+          information={information}
+          isMobile={isMobile}
+          className={transitionHidden ? 'site-info--transition-hidden' : undefined}
+        />
+      ) : null}
       {children}
     </SiteInfoContext.Provider>
   );

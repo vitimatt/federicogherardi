@@ -5,6 +5,10 @@ export type ProjectTransitionPayload = {
   projectId: string;
   projectIndex: number;
   layout: RandomImageLayout;
+  category: string;
+  title: string;
+  client: string;
+  imageCount: number;
   startedAt: number;
 };
 
@@ -225,4 +229,25 @@ export function buildColumnHidePlan(items: HTMLElement[], skipIndex: number): Co
 
 export function flattenHideSteps(hideSteps: number[][], stepCount: number) {
   return hideSteps.slice(0, stepCount).flat();
+}
+
+export function buildSequentialRevealSteps(count: number): number[][] {
+  return Array.from({ length: count }, (_, index) => [index]);
+}
+
+export function getSiteInfoTransitionHiddenIndices(sectionCount: number, step: number) {
+  const hidden = new Set<number>();
+
+  for (let index = 0; index < Math.min(step, sectionCount); index += 1) {
+    hidden.add(sectionCount - 1 - index);
+  }
+
+  return hidden;
+}
+
+export function getProjectHideStepForCombinedStep(
+  combinedStep: number,
+  siteInfoSectionCount: number,
+) {
+  return Math.max(0, combinedStep - siteInfoSectionCount);
 }

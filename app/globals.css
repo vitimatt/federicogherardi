@@ -143,8 +143,54 @@
     cursor: pointer;
   }
 
-  .site-info--mobile .site-info__header {
+  .site-info--mobile .site-info__header:not(.project-item__content) {
     cursor: default;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    grid-template-columns: none;
+    gap: 18px;
+  }
+
+  .site-info.site-info--inline {
+    position: relative;
+    top: auto;
+    right: auto;
+    left: auto;
+    z-index: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    margin-top: 27px;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  .site-info--inline .site-info__section.project-item__content + .site-info__section.project-item__content,
+  .site-info--inline .site-info__header.project-item__content + .site-info__section.project-item__content {
+    margin-top: 18px;
+  }
+
+  .site-info--inline .site-info__header.project-item__content,
+  .site-info--inline .site-info__section.project-item__content {
+    width: 100%;
+  }
+
+  .site-info--inline .site-info__grid {
+    width: 100%;
+  }
+
+  .site-info--inline.site-info--mobile {
+    z-index: 0;
+  }
+
+  .home-layout--mobile .home-layout__projects {
+    position: relative;
+    z-index: 1;
+    padding-left: 20px;
+    padding-right: 20px;
+    box-sizing: border-box;
   }
 
   .site-info__header + .site-info__section,
@@ -215,6 +261,14 @@
     object-fit: contain;
   }
 
+  @media (max-width: 768px) {
+    .opening-screen__image {
+      width: 70vw;
+      max-width: 70vw;
+      max-height: none;
+    }
+  }
+
   .home-layout {
     isolation: isolate;
     transition: background-color 1000ms ease;
@@ -222,6 +276,7 @@
 
   .home-layout .project-item__content,
   body.body--project-transition .project-item__content,
+  .home-layout--transitioning .project-item--transition-target .project-item__content,
   .site-info .site-info__header,
   .site-info .site-info__section {
     color: #fff;
@@ -230,6 +285,7 @@
 
   .home-layout .project-item__content :is(.text-primary, .text-secondary),
   body.body--project-transition .project-item__content :is(.text-primary, .text-secondary),
+  .home-layout--transitioning .project-item--transition-target .project-item__content :is(.text-primary, .text-secondary),
   .site-info :is(.text-primary, .text-secondary) {
     color: inherit;
   }
@@ -243,14 +299,20 @@
     color: inherit;
   }
 
+  .project-page__list-overlay .project-item__content {
+    color: #fff;
+    mix-blend-mode: difference;
+  }
+
   .project-page__list-overlay .project-item__indicator,
   .project-page__list-overlay .project-item__title {
-    color: #fff;
-    mix-blend-mode: normal;
+    color: inherit;
+    mix-blend-mode: inherit;
   }
 
   .home-layout.bg-black.home-layout--transitioning {
     background-color: #fff;
+    isolation: auto;
   }
 
   .site-info--transition-hidden {
@@ -261,29 +323,6 @@
   .home-layout--transitioning .project-item--transition-target .project-item__indicator,
   .home-layout--transitioning .project-item--transition-target .project-item__title {
     opacity: 1;
-  }
-
-  .project-transition-hero-wrap {
-    position: fixed;
-    z-index: 15;
-    pointer-events: none;
-  }
-
-  .project-transition-hero {
-    position: fixed;
-    z-index: 15;
-    display: block;
-    object-fit: contain;
-    filter: grayscale(100%);
-    pointer-events: none;
-    opacity: 0.35;
-  }
-
-  .project-transition-hero--rotated {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%) rotate(90deg);
   }
 
   .project-page {
@@ -305,7 +344,6 @@
 
   .project-page--navigating .project-page__list-overlay {
     z-index: 10;
-    mix-blend-mode: normal;
   }
 
   .project-page--navigating .project-page__list-overlay .project-item__content {
@@ -471,9 +509,9 @@
     animation: project-page-image-mount-in 800ms ease forwards;
   }
 
-  .project-page-image__caption.project-page-image--opacity-rise {
-    opacity: 0.2;
-    animation: project-image-opacity-rise 400ms ease forwards;
+  .project-page-image__caption--handoff-hidden {
+    opacity: 0;
+    visibility: hidden;
   }
 
   .project-page-image {
@@ -489,9 +527,14 @@
     animation: project-page-image-mount-in 800ms ease forwards;
   }
 
-  .project-page-image--opacity-rise {
+  .project-page-image--from-home {
     opacity: 0.2;
-    animation: project-image-opacity-rise 400ms ease forwards;
+    transition-property: opacity;
+    transition-timing-function: ease;
+  }
+
+  .project-page-image--from-home.project-page-image--at-rest {
+    opacity: 0.35;
   }
 
   .project-page-image--enter {
@@ -505,18 +548,6 @@
   @keyframes project-page-image-mount-in {
     from {
       opacity: 0;
-      filter: grayscale(100%);
-    }
-
-    to {
-      opacity: 0.35;
-      filter: grayscale(100%);
-    }
-  }
-
-  @keyframes project-image-opacity-rise {
-    from {
-      opacity: 0.2;
       filter: grayscale(100%);
     }
 
@@ -701,6 +732,23 @@
     animation: project-hover-fade-out 400ms ease forwards;
   }
 
+  .project-hover-image--transition-hero {
+    z-index: 15;
+    opacity: 0.2;
+    animation: none;
+    transition-property: opacity;
+    transition-timing-function: ease;
+  }
+
+  .project-hover-image-wrap.project-hover-image--transition-hero {
+    opacity: 0.2;
+  }
+
+  .project-hover-image--transition-hero.project-hover-image--transition-hero-active,
+  .project-hover-image-wrap.project-hover-image--transition-hero.project-hover-image--transition-hero-active {
+    opacity: 0.35;
+  }
+
   .project-hover-image-wrap.project-hover-image--enter,
   .project-hover-image-wrap.project-hover-image--exit {
     position: fixed;
@@ -748,10 +796,10 @@ body.body--project-transition {
   background-color: #fff !important;
 }
 
-html.body--project-page:not(.body--project-page-list-black) .site-info,
-html.body--project-transition .site-info,
-body.body--project-page:not(.body--project-page-list-black) .site-info,
-body.body--project-transition .site-info {
+html.body--project-page:not(.body--project-page-list-black) .site-info:not(.site-info--inline),
+html.body--project-transition .site-info:not(.site-info--inline),
+body.body--project-page:not(.body--project-page-list-black) .site-info:not(.site-info--inline),
+body.body--project-transition .site-info:not(.site-info--inline) {
   visibility: hidden;
   pointer-events: none;
   opacity: 0;
@@ -760,8 +808,8 @@ body.body--project-transition .site-info {
     visibility 0s linear 1000ms;
 }
 
-html.body--project-page.body--project-page-list-black .site-info,
-body.body--project-page.body--project-page-list-black .site-info {
+html.body--project-page.body--project-page-list-black .site-info:not(.site-info--inline),
+body.body--project-page.body--project-page-list-black .site-info:not(.site-info--inline) {
   visibility: visible;
   opacity: 1;
   transition:

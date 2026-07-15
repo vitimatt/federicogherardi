@@ -36,8 +36,9 @@ export const informationType = defineType({
     defineField({
       name: 'clientList',
       title: 'Client List',
-      type: 'array',
-      of: [{ type: 'string' }],
+      type: 'text',
+      rows: 8,
+      description: 'One client per line',
     }),
   ],
 });

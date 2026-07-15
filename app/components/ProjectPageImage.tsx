@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { RandomImageLayout } from '@/app/lib/imageLayoutCore';
 
@@ -9,9 +9,11 @@ type ProjectPageImageProps = {
   caption: string;
   skipMountFade?: boolean;
   opacityRiseFromHome?: boolean;
+  opacityRiseMs?: number;
   mountDelayMs?: number;
   mountFadeMs?: number;
   positionFixed?: boolean;
+  onReady?: () => void;
 };
 
 export function ProjectPageImage({
@@ -19,14 +21,86 @@ export function ProjectPageImage({
   caption,
   skipMountFade = false,
   opacityRiseFromHome = false,
+  opacityRiseMs = 1000,
   mountDelayMs = 0,
   mountFadeMs = 400,
   positionFixed = false,
+  onReady,
 }: ProjectPageImageProps) {
   const { image, isLandscape, top, left, boxWidth, boxHeight, renderWidth, renderHeight } = layout;
-  const [mounting, setMounting] = useState(opacityRiseFromHome || !skipMountFade);
+  const [mounting, setMounting] = useState(!skipMountFade && !opacityRiseFromHome);
+  const [opacityRiseActive, setOpacityRiseActive] = useState(false);
   const [active, setActive] = useState(false);
   const [exiting, setExiting] = useState(false);
+  const readyReportedRef = useRef(false);
+  const imageLoadedRef = useRef(false);
+  const opacityDoneRef = useRef(false);
+
+  useEffect(() => {
+    readyReportedRef.current = false;
+    imageLoadedRef.current = false;
+    opacityDoneRef.current = false;
+  }, [image.url]);
+
+  useEffect(() => {
+    if (!opacityRiseFromHome) {
+      return;
+    }
+
+    if (opacityRiseMs <= 0) {
+      setOpacityRiseActive(true);
+      opacityDoneRef.current = true;
+      tryReportReady();
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setOpacityRiseActive(true);
+      });
+    });
+
+    const fallback = window.setTimeout(() => {
+      opacityDoneRef.current = true;
+      tryReportReady();
+    }, opacityRiseMs + 50);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(fallback);
+    };
+  }, [opacityRiseFromHome, opacityRiseMs, image.url]);
+
+  const tryReportReady = () => {
+    if (readyReportedRef.current) {
+      return;
+    }
+
+    if (!imageLoadedRef.current) {
+      return;
+    }
+
+    if (opacityRiseFromHome && !opacityDoneRef.current) {
+      return;
+    }
+
+    readyReportedRef.current = true;
+    onReady?.();
+  };
+
+  const handleImageLoad = () => {
+    imageLoadedRef.current = true;
+    tryReportReady();
+  };
+
+  const handleOpacityTransitionEnd = (event: React.TransitionEvent<HTMLImageElement>) => {
+    if (event.propertyName !== 'opacity' || !opacityRiseFromHome) {
+      return;
+    }
+
+    opacityDoneRef.current = true;
+    tryReportReady();
+  };
 
   const handleMouseEnter = () => {
     setExiting(false);
@@ -42,10 +116,7 @@ export function ProjectPageImage({
       return;
     }
 
-    if (
-      event.animationName.endsWith('project-page-image-mount-in') ||
-      event.animationName.endsWith('project-image-opacity-rise')
-    ) {
+    if (event.animationName.endsWith('project-page-image-mount-in')) {
       setMounting(false);
       return;
     }
@@ -56,25 +127,27 @@ export function ProjectPageImage({
     }
   };
 
-  const mountAnimationClass = mounting
-    ? opacityRiseFromHome
-      ? 'project-page-image--opacity-rise'
-      : 'project-page-image--mount'
-    : '';
+  const mountAnimationClass = mounting ? 'project-page-image--mount' : '';
 
   const imageAnimationClass = exiting
     ? 'project-page-image--exit'
     : active
       ? 'project-page-image--enter'
-      : mountAnimationClass;
+      : opacityRiseFromHome
+        ? `project-page-image--from-home${opacityRiseActive ? ' project-page-image--at-rest' : ''}`
+        : mountAnimationClass;
 
-  const captionAnimationClass = mounting ? mountAnimationClass : '';
+  const captionAnimationClass = mounting && !opacityRiseFromHome ? mountAnimationClass : '';
 
   const animationTimingStyle = mounting
     ? {
         ...(mountDelayMs > 0 ? { animationDelay: `${mountDelayMs}ms` } : {}),
         animationDuration: `${mountFadeMs}ms`,
       }
+    : undefined;
+
+  const opacityRiseStyle = opacityRiseFromHome
+    ? { transitionDuration: `${opacityRiseMs}ms` }
     : undefined;
 
   return (
@@ -109,12 +182,15 @@ export function ProjectPageImage({
                 }
               : {}),
             ...animationTimingStyle,
+            ...opacityRiseStyle,
           }}
           onAnimationEnd={handleAnimationEnd}
+          onTransitionEnd={handleOpacityTransitionEnd}
+          onLoad={handleImageLoad}
         />
       </div>
       <span
-        className={`project-page-image__caption text-secondary ${captionAnimationClass}`}
+        className={`project-page-image__caption text-secondary ${captionAnimationClass}${opacityRiseFromHome ? ' project-page-image__caption--handoff-hidden' : ''}`}
         style={animationTimingStyle}
         onAnimationEnd={handleAnimationEnd}
       >

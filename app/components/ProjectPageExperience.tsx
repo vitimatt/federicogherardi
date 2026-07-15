@@ -5,7 +5,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { ProjectList, type ProjectListItem } from '@/app/components/ProjectList';
 import { ProjectPageImage } from '@/app/components/ProjectPageImage';
-import { useHomeLayout } from '@/app/hooks/useHomeLayout';
+import { SiteInfo } from '@/app/components/SiteInfo';
+import { useSiteInfo } from '@/app/components/SiteInfoProvider';
 import { formatProjectMeta } from '@/app/lib/formatProjectMeta';
 import {
   buildProjectPageImageLayouts,
@@ -13,10 +14,14 @@ import {
 } from '@/app/lib/projectPageImageLayout';
 import {
   buildColumnHidePlan,
+  buildSequentialRevealSteps,
   clearProjectTransition,
   dispatchProjectTransitionEnd,
   dispatchProjectTransitionStart,
   flattenHideSteps,
+  getProjectHideStepForCombinedStep,
+  getProjectTransitionRemainingMs,
+  getSiteInfoTransitionHiddenIndices,
   PROJECT_TRANSITION_BG_FADE_MS,
   readProjectTransition,
   saveProjectTransition,
@@ -24,6 +29,7 @@ import {
   startProjectPageBackgroundTransition,
   type ColumnHidePlan,
 } from '@/app/lib/projectTransition';
+import { getSiteInfoInlineSectionCount } from '@/app/lib/siteInformation';
 import type { RandomImageLayout } from '@/app/lib/randomImageLayout';
 
 type ProjectImage = {
@@ -48,7 +54,6 @@ type ProjectPageExperienceProps = {
 
 const PROJECT_PAGE_MOUNT_FADE_MS = 800;
 const PROJECT_PAGE_MOUNT_STAGGER_MS = 50;
-const PROJECT_PAGE_MOUNT_LEAD_MS = 250;
 const SCROLL_BOTTOM_THRESHOLD_PX = 1;
 const LIST_REVEAL_INTERVAL_MS = 80;
 const LIST_HIDE_INTERVAL_MS = 80;
@@ -75,6 +80,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   const listOverlayRef = useRef(false);
   const isListClosingRef = useRef(false);
   const revealTimerRef = useRef<number | null>(null);
+  const siteInfoRevealTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const overlayCloseTimerRef = useRef<number | null>(null);
   const scrollToTopFrameRef = useRef<number | null>(null);
@@ -82,12 +88,13 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   const transitionStartRef = useRef<number>(0);
   const transitionHideTimerRef = useRef<number | null>(null);
   const navigateTimerRef = useRef<number | null>(null);
+  const handoffCompletedRef = useRef(false);
   const [fromTransition, setFromTransition] =
     useState<ReturnType<typeof readProjectTransition>>(null);
   const [layouts, setLayouts] = useState<ReturnType<typeof buildProjectPageImageLayouts> | null>(
     null,
   );
-  const [bridgeHandoffComplete, setBridgeHandoffComplete] = useState(true);
+  const [canvasHeight, setCanvasHeight] = useState<number | null>(null);
   const [imageHandoffFixed, setImageHandoffFixed] = useState(false);
   const [secondaryMounting, setSecondaryMounting] = useState(true);
   const [listOverlayActive, setListOverlayActive] = useState(false);
@@ -100,19 +107,13 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   const [listHideStep, setListHideStep] = useState(0);
   const [activeTransition, setActiveTransition] = useState<ActiveTransition | null>(null);
   const [transitionHideStep, setTransitionHideStep] = useState(0);
-  const { layoutMode, isMobile } = useHomeLayout(layoutRef);
+  const [siteInfoRevealStep, setSiteInfoRevealStep] = useState(0);
+  const [siteInfoRevealComplete, setSiteInfoRevealComplete] = useState(false);
+  const { layoutMode, isMobile, information } = useSiteInfo();
 
-  useLayoutEffect(() => {
-    const transition = readProjectTransition(project.slug);
-    setFromTransition(transition);
-    setLayouts(buildProjectPageImageLayouts(project.images, transition?.layout ?? null));
-    setBridgeHandoffComplete(!transition);
-    setSecondaryMounting(!transition);
-  }, [project.images, project.slug]);
-
-  const canvasHeight = useMemo(
-    () => (layouts ? getProjectPageCanvasHeight(layouts) : null),
-    [layouts],
+  const siteInfoSectionCount = useMemo(
+    () => (isMobile ? getSiteInfoInlineSectionCount(information) : 0),
+    [information, isMobile],
   );
   const isListRevealActive = listOverlayActive && !listRevealComplete && !listHiding;
   const listRevealedIndices = useMemo(
@@ -122,21 +123,84 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   );
   const listHideHiddenIndices = useMemo(
     () =>
-      listHidePlan ? new Set(flattenHideSteps(listHidePlan.hideSteps, listHideStep)) : new Set<number>(),
-    [listHidePlan, listHideStep],
+      listHidePlan
+        ? new Set(
+            flattenHideSteps(
+              listHidePlan.hideSteps,
+              getProjectHideStepForCombinedStep(listHideStep, siteInfoSectionCount),
+            ),
+          )
+        : new Set<number>(),
+    [listHidePlan, listHideStep, siteInfoSectionCount],
   );
+  const totalListHideSteps = (listHidePlan?.hideSteps.length ?? 0) + siteInfoSectionCount;
   const isListHideComplete =
-    listHiding && listHidePlan !== null && listHideStep >= listHidePlan.hideSteps.length;
+    listHiding && listHidePlan !== null && listHideStep >= totalListHideSteps;
   const isProjectNavigating = activeTransition !== null;
   const showProjectMeta = !listOverlayActive || isListHideComplete;
   const projectMetaClassName = `project-page__meta${showProjectMeta ? '' : ' project-page__meta--hidden'}`;
   const transitionHiddenIndices = useMemo(
     () =>
       activeTransition
-        ? new Set(flattenHideSteps(activeTransition.hideSteps, transitionHideStep))
+        ? new Set(
+            flattenHideSteps(
+              activeTransition.hideSteps,
+              getProjectHideStepForCombinedStep(transitionHideStep, siteInfoSectionCount),
+            ),
+          )
         : listHideHiddenIndices,
-    [activeTransition, listHideHiddenIndices, transitionHideStep],
+    [activeTransition, listHideHiddenIndices, siteInfoSectionCount, transitionHideStep],
   );
+
+  const siteInfoStaggerHiddenIndices = useMemo(() => {
+    if (!isMobile) {
+      return null;
+    }
+
+    if (isProjectNavigating && transitionHideStep > 0) {
+      return getSiteInfoTransitionHiddenIndices(siteInfoSectionCount, transitionHideStep);
+    }
+
+    if (listHiding && listHideStep > 0) {
+      return getSiteInfoTransitionHiddenIndices(siteInfoSectionCount, listHideStep);
+    }
+
+    return null;
+  }, [
+    isMobile,
+    isProjectNavigating,
+    listHiding,
+    listHideStep,
+    siteInfoSectionCount,
+    transitionHideStep,
+  ]);
+
+  const siteInfoStaggerRevealedIndices = useMemo(() => {
+    if (!isMobile || !listOverlayActive || listHiding || isProjectNavigating) {
+      return null;
+    }
+
+    if (isListRevealActive) {
+      return new Set<number>();
+    }
+
+    if (siteInfoRevealComplete) {
+      return null;
+    }
+
+    return new Set(
+      flattenHideSteps(buildSequentialRevealSteps(siteInfoSectionCount), siteInfoRevealStep),
+    );
+  }, [
+    isListRevealActive,
+    isMobile,
+    isProjectNavigating,
+    listHiding,
+    listOverlayActive,
+    siteInfoRevealComplete,
+    siteInfoRevealStep,
+    siteInfoSectionCount,
+  ]);
 
   const handleListRevealPlanReady = useCallback((plan: ColumnHidePlan) => {
     setListRevealPlan((currentPlan) => currentPlan ?? plan);
@@ -156,16 +220,26 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     }
   }, []);
 
+  const clearSiteInfoRevealTimer = useCallback(() => {
+    if (siteInfoRevealTimerRef.current !== null) {
+      window.clearInterval(siteInfoRevealTimerRef.current);
+      siteInfoRevealTimerRef.current = null;
+    }
+  }, []);
+
   const resetListReveal = useCallback(() => {
     clearListRevealTimer();
     clearListHideTimer();
+    clearSiteInfoRevealTimer();
     setListRevealPlan(null);
     setListRevealStep(0);
     setListRevealComplete(false);
     setListHiding(false);
     setListHidePlan(null);
     setListHideStep(0);
-  }, [clearListHideTimer, clearListRevealTimer]);
+    setSiteInfoRevealStep(0);
+    setSiteInfoRevealComplete(false);
+  }, [clearListHideTimer, clearListRevealTimer, clearSiteInfoRevealTimer]);
 
   const clearBackgroundFadeDuration = useCallback(() => {
     if (typeof document === 'undefined') {
@@ -201,13 +275,13 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   }, [clearBackgroundFadeDuration, clearListHideTimer, resetListReveal]);
 
   const scheduleFinishClose = useCallback(
-    (hideSteps: number[][]) => {
+    (totalHideSteps: number) => {
       if (overlayCloseTimerRef.current !== null) {
         window.clearTimeout(overlayCloseTimerRef.current);
       }
 
       const hideDuration =
-        hideSteps.length <= 1 ? 0 : (hideSteps.length - 1) * LIST_HIDE_INTERVAL_MS;
+        totalHideSteps <= 1 ? 0 : (totalHideSteps - 1) * LIST_HIDE_INTERVAL_MS;
       const totalCloseMs = Math.max(hideDuration, PROJECT_TRANSITION_BG_FADE_MS);
 
       overlayCloseTimerRef.current = window.setTimeout(() => {
@@ -255,41 +329,50 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       }
 
       const listItems = layoutRef.current?.querySelectorAll<HTMLElement>('.project-item');
-    const hidePlan = buildColumnHidePlan(Array.from(listItems ?? []), -1);
-    const { hideSteps } = hidePlan;
+      const hidePlan = buildColumnHidePlan(Array.from(listItems ?? []), -1);
+      const { hideSteps } = hidePlan;
+      const mobileSiteInfoSectionCount = isMobile ? getSiteInfoInlineSectionCount(information) : 0;
+      const totalHideSteps = mobileSiteInfoSectionCount + hideSteps.length;
 
-    setListHidePlan(hidePlan);
-    setListHideStep(0);
+      setListHidePlan(hidePlan);
+      setListHideStep(0);
 
-    if (hideSteps.length === 0) {
-      scheduleFinishClose(hideSteps);
-      return;
-    }
-
-    window.requestAnimationFrame(() => {
-      setListHideStep(1);
-
-      if (hideSteps.length === 1) {
-        scheduleFinishClose(hideSteps);
+      if (totalHideSteps === 0) {
+        scheduleFinishClose(0);
         return;
       }
 
-      hideTimerRef.current = window.setInterval(() => {
-        setListHideStep((currentStep) => {
-          const nextStep = currentStep + 1;
+      window.requestAnimationFrame(() => {
+        setListHideStep(1);
 
-          if (nextStep >= hideSteps.length) {
-            clearListHideTimer();
-          }
+        if (totalHideSteps === 1) {
+          scheduleFinishClose(1);
+          return;
+        }
 
-          return nextStep;
-        });
-      }, LIST_HIDE_INTERVAL_MS);
+        hideTimerRef.current = window.setInterval(() => {
+          setListHideStep((currentStep) => {
+            const nextStep = currentStep + 1;
 
-      scheduleFinishClose(hideSteps);
-    });
+            if (nextStep >= totalHideSteps) {
+              clearListHideTimer();
+            }
+
+            return nextStep;
+          });
+        }, LIST_HIDE_INTERVAL_MS);
+
+        scheduleFinishClose(totalHideSteps);
+      });
     },
-    [beginBackgroundFadeToWhite, clearListRevealTimer, clearListHideTimer, scheduleFinishClose],
+    [
+      beginBackgroundFadeToWhite,
+      clearListHideTimer,
+      clearListRevealTimer,
+      information,
+      isMobile,
+      scheduleFinishClose,
+    ],
   );
 
   const cancelScrollToTop = useCallback(() => {
@@ -407,6 +490,10 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
         projectId: targetProject._id,
         projectIndex: index,
         layout,
+        category: targetProject.category,
+        title: targetProject.title,
+        client: targetProject.client,
+        imageCount: targetProject.imageCount,
       });
 
       router.prefetch(`/projects/${slug}`);
@@ -427,8 +514,14 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       setListOverlayFading(false);
       setActiveTransition(transition);
       setTransitionHideStep(0);
+      clearSiteInfoRevealTimer();
+      setSiteInfoRevealStep(0);
+      setSiteInfoRevealComplete(false);
 
-      if (hideSteps.length === 0) {
+      const mobileSiteInfoSectionCount = isMobile ? getSiteInfoInlineSectionCount(information) : 0;
+      const totalHideSteps = mobileSiteInfoSectionCount + hideSteps.length;
+
+      if (totalHideSteps === 0) {
         scheduleProjectNavigation(slug);
         return;
       }
@@ -436,17 +529,18 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       const startHideSequence = () => {
         setTransitionHideStep(1);
 
-        if (hideSteps.length === 1) {
+        if (totalHideSteps === 1) {
           scheduleProjectNavigation(slug);
           return;
         }
 
         transitionHideTimerRef.current = window.setInterval(() => {
           setTransitionHideStep((currentStep) => {
-            const steps = transitionRef.current?.hideSteps ?? [];
             const nextStep = currentStep + 1;
+            const steps =
+              (transitionRef.current?.hideSteps.length ?? 0) + mobileSiteInfoSectionCount;
 
-            if (nextStep >= steps.length) {
+            if (nextStep >= steps) {
               if (transitionHideTimerRef.current !== null) {
                 window.clearInterval(transitionHideTimerRef.current);
                 transitionHideTimerRef.current = null;
@@ -469,6 +563,9 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     [
       clearListRevealTimer,
       clearProjectNavigateTimers,
+      clearSiteInfoRevealTimer,
+      information,
+      isMobile,
       isProjectNavigating,
       listHiding,
       router,
@@ -497,13 +594,36 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     };
   }, [listOverlayFading]);
 
-  useLayoutEffect(() => {
-    if (!fromTransition || !pageRef.current) {
+  const handleHeroImageReady = useCallback(() => {
+    if (!fromTransition || handoffCompletedRef.current) {
       return;
     }
 
-    pageRef.current.scrollTop = 0;
-  }, [fromTransition, project.slug]);
+    handoffCompletedRef.current = true;
+    pageRef.current?.scrollTo(0, 0);
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        clearProjectTransition();
+        dispatchProjectTransitionEnd();
+        setImageHandoffFixed(false);
+        setProjectPageBackground(true);
+      });
+    });
+  }, [fromTransition]);
+
+  useLayoutEffect(() => {
+    handoffCompletedRef.current = false;
+    const transition = readProjectTransition(project.slug);
+    const nextLayouts = buildProjectPageImageLayouts(project.images, transition?.layout ?? null);
+
+    setFromTransition(transition);
+    setLayouts(nextLayouts);
+    setCanvasHeight(getProjectPageCanvasHeight(nextLayouts));
+    setImageHandoffFixed(Boolean(transition));
+    setSecondaryMounting(!transition);
+    pageRef.current?.scrollTo(0, 0);
+  }, [project.slug, project.images]);
 
   useLayoutEffect(() => {
     if (!fromTransition || !layouts || secondaryMounting) {
@@ -512,42 +632,6 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
     setSecondaryMounting(true);
   }, [fromTransition, layouts, secondaryMounting]);
-
-  useLayoutEffect(() => {
-    if (!fromTransition || !layouts || !secondaryMounting || bridgeHandoffComplete) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setBridgeHandoffComplete(true);
-      setImageHandoffFixed(true);
-    }, PROJECT_PAGE_MOUNT_LEAD_MS);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [fromTransition, layouts, secondaryMounting, bridgeHandoffComplete]);
-
-  useLayoutEffect(() => {
-    if (!imageHandoffFixed) {
-      return;
-    }
-
-    pageRef.current?.scrollTo(0, 0);
-
-    const frame = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        clearProjectTransition();
-        dispatchProjectTransitionEnd();
-        setImageHandoffFixed(false);
-        setProjectPageBackground(true);
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [imageHandoffFixed]);
 
   useLayoutEffect(() => {
     if (!listRevealPlan || !isListRevealActive) {
@@ -593,6 +677,49 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       clearListRevealTimer();
     };
   }, [clearListRevealTimer, isListRevealActive, listRevealPlan]);
+
+  useEffect(() => {
+    if (!isMobile || !listOverlayActive || listHiding || isProjectNavigating) {
+      return;
+    }
+
+    if (!listRevealComplete || siteInfoRevealComplete) {
+      return;
+    }
+
+    if (siteInfoSectionCount <= 1) {
+      setSiteInfoRevealComplete(true);
+      return;
+    }
+
+    setSiteInfoRevealStep(1);
+
+    siteInfoRevealTimerRef.current = window.setInterval(() => {
+      setSiteInfoRevealStep((currentStep) => {
+        const nextStep = currentStep + 1;
+
+        if (nextStep >= siteInfoSectionCount) {
+          clearSiteInfoRevealTimer();
+          setSiteInfoRevealComplete(true);
+        }
+
+        return nextStep;
+      });
+    }, LIST_REVEAL_INTERVAL_MS);
+
+    return () => {
+      clearSiteInfoRevealTimer();
+    };
+  }, [
+    clearSiteInfoRevealTimer,
+    isMobile,
+    isProjectNavigating,
+    listHiding,
+    listOverlayActive,
+    listRevealComplete,
+    siteInfoRevealComplete,
+    siteInfoSectionCount,
+  ]);
 
   const scrollPageBy = useCallback((deltaY: number) => {
     const page = pageRef.current;
@@ -745,6 +872,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     return () => {
       clearListRevealTimer();
       clearListHideTimer();
+      clearSiteInfoRevealTimer();
       clearProjectNavigateTimers();
       cancelScrollToTop();
       clearBackgroundFadeDuration();
@@ -759,6 +887,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     clearListHideTimer,
     clearListRevealTimer,
     clearProjectNavigateTimers,
+    clearSiteInfoRevealTimer,
   ]);
 
   return (
@@ -766,8 +895,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       ref={pageRef}
       className={`project-page${listOverlayActive ? ' project-page--list-overlay-active' : ''}${listOverlayFading ? ' project-page--list-overlay-visible' : ''}${listHiding ? ' project-page--list-overlay-closing' : ''}${isProjectNavigating ? ' project-page--navigating' : ''}`}
     >
-      {layouts ? (
-        <div className="project-page__canvas" style={{ height: `${canvasHeight}px` }}>
+      <div className="project-page__canvas" style={{ height: `${canvasHeight ?? 0}px` }}>
           <header className={projectMetaClassName}>
             <span className="project-page__indicator text-secondary">
               {formatProjectMeta(project.category, project.images.length)}
@@ -776,11 +904,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
               {project.title} — {project.client}
             </span>
           </header>
-          {layouts.map((layout, index) => {
-            if (fromTransition && index === 0 && !bridgeHandoffComplete) {
-              return null;
-            }
-
+          {layouts?.map((layout, index) => {
             if (fromTransition && index > 0 && !secondaryMounting) {
               return null;
             }
@@ -791,25 +915,20 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
                 layout={layout}
                 caption={String(index + 1).padStart(2, '0')}
                 skipMountFade={Boolean(fromTransition && index === 0)}
+                opacityRiseFromHome={Boolean(fromTransition && index === 0)}
+                opacityRiseMs={
+                  fromTransition && index === 0
+                    ? getProjectTransitionRemainingMs(fromTransition.startedAt)
+                    : undefined
+                }
                 positionFixed={Boolean(fromTransition && index === 0 && imageHandoffFixed)}
                 mountDelayMs={index > 0 ? (index - 1) * PROJECT_PAGE_MOUNT_STAGGER_MS : 0}
                 mountFadeMs={PROJECT_PAGE_MOUNT_FADE_MS}
+                onReady={fromTransition && index === 0 ? handleHeroImageReady : undefined}
               />
             );
           })}
         </div>
-      ) : (
-        <div className="project-page__canvas">
-          <header className={projectMetaClassName}>
-            <span className="project-page__indicator text-secondary">
-              {formatProjectMeta(project.category, project.images.length)}
-            </span>
-            <span className="project-page__title text-primary">
-              {project.title} — {project.client}
-            </span>
-          </header>
-        </div>
-      )}
       {listOverlayActive ? (
         <div
           ref={overlayRef}
@@ -834,7 +953,17 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
               onProjectNavigate={handleProjectNavigate}
               currentProjectSlug={project.slug}
               onCurrentProjectClick={handleCurrentProjectClick}
+              isMobile={isMobile}
             />
+            {isMobile ? (
+              <SiteInfo
+                information={information}
+                isMobile
+                placement="inline"
+                staggerRevealedIndices={siteInfoStaggerRevealedIndices}
+                staggerHiddenIndices={siteInfoStaggerHiddenIndices}
+              />
+            ) : null}
           </div>
         </div>
       ) : null}

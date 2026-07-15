@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 
 import { PageBackgroundController } from '@/app/components/PageBackgroundController';
-import { ProjectTransitionBridge } from '@/app/components/ProjectTransitionBridge';
 import { SiteInfoProvider } from '@/app/components/SiteInfoProvider';
 import { toSiteInformation, SITE_INFORMATION_QUERY, type SiteInformationRecord } from '@/app/lib/siteInformation';
 import { client } from '@/sanity/lib/client';
@@ -30,7 +29,6 @@ export default async function RootLayout({
     <html lang="en">
       <body>
         <PageBackgroundController />
-        <ProjectTransitionBridge />
         <SiteInfoProvider information={toSiteInformation(information)}>
           {children}
         </SiteInfoProvider>

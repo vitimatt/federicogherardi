@@ -4,10 +4,10 @@ import Link from 'next/link';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { ProjectHoverImage } from '@/app/components/ProjectHoverImage';
-import { syncLayoutFromDom } from '@/app/lib/imageLayoutCore';
+import { PAGE_MARGIN_PX, syncLayoutFromDom } from '@/app/lib/imageLayoutCore';
 import { createRandomImageLayout, type RandomImageLayout } from '@/app/lib/randomImageLayout';
 import { formatProjectMeta } from '@/app/lib/formatProjectMeta';
-import { buildColumnHidePlan, buildColumnRevealPlan, type ColumnHidePlan } from '@/app/lib/projectTransition';
+import { buildColumnHidePlan, buildColumnRevealPlan, PROJECT_TRANSITION_BG_FADE_MS, type ColumnHidePlan } from '@/app/lib/projectTransition';
 
 type ProjectImage = {
   url: string;
@@ -70,7 +70,55 @@ type ProjectListProps = {
   ) => void;
   currentProjectSlug?: string;
   onCurrentProjectClick?: () => void;
+  isMobile?: boolean;
 };
+
+function getListScrollContainer(listRoot: HTMLElement): HTMLElement | null {
+  const columns = listRoot.querySelector<HTMLElement>('.project-columns');
+  const homeLayout = listRoot.closest<HTMLElement>('.home-layout');
+  const listOverlay = listRoot.closest<HTMLElement>('.project-page__list-overlay');
+
+  if (columns) {
+    const { overflowY } = getComputedStyle(columns);
+
+    if (overflowY === 'auto' || overflowY === 'scroll') {
+      return columns;
+    }
+  }
+
+  if (listOverlay) {
+    return listOverlay;
+  }
+
+  if (homeLayout?.classList.contains('home-layout--single-column')) {
+    return homeLayout;
+  }
+
+  return homeLayout ?? columns;
+}
+
+function scrollHoveredProjectItemIntoView(item: HTMLElement, offsetPx = PAGE_MARGIN_PX) {
+  const listRoot = item.closest<HTMLElement>('[data-project-list-root]');
+
+  if (!listRoot) {
+    return;
+  }
+
+  const scrollContainer = getListScrollContainer(listRoot);
+
+  if (!scrollContainer) {
+    return;
+  }
+
+  const containerTop = scrollContainer.getBoundingClientRect().top;
+  const itemTop = item.getBoundingClientRect().top;
+  const nextScrollTop = scrollContainer.scrollTop + (itemTop - containerTop) - offsetPx;
+
+  scrollContainer.scrollTo({
+    top: Math.max(0, nextScrollTop),
+    behavior: 'smooth',
+  });
+}
 
 export function ProjectList({
   projects,
@@ -85,6 +133,7 @@ export function ProjectList({
   onProjectNavigate,
   currentProjectSlug,
   onCurrentProjectClick,
+  isMobile = false,
 }: ProjectListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const hoveredProjectRef = useRef<string | null>(null);
@@ -213,13 +262,21 @@ export function ProjectList({
     onProjectNavigate?.(project, index, layout, hidePlan);
   };
 
-  const handleProjectMouseEnter = (project: ProjectListItem, fake: boolean) => {
+  const handleProjectMouseEnter = (
+    project: ProjectListItem,
+    fake: boolean,
+    itemElement: HTMLElement,
+  ) => {
     if (isTransitioning) {
       return;
     }
 
     hoveredProjectRef.current = project._id;
     cancelProjectFadeOut(project._id);
+
+    if (!isMobile && itemElement.classList.contains('project-item--has-image')) {
+      scrollHoveredProjectItemIntoView(itemElement);
+    }
 
     if (fake) {
       const image = pickRandomImage(imagePool);
@@ -275,9 +332,11 @@ export function ProjectList({
 
     const syncIndicatorWidth = () => {
       const layout = list.closest<HTMLElement>('.home-layout, .project-page__list-layout');
+      const projects = list.closest<HTMLElement>('.home-layout__projects');
 
       list.style.removeProperty('--indicator-width');
       layout?.style.removeProperty('--indicator-width');
+      projects?.style.removeProperty('--indicator-width');
 
       const indicators =
         layout?.querySelectorAll<HTMLElement>(
@@ -293,8 +352,10 @@ export function ProjectList({
       });
 
       if (maxWidth > 0) {
-        list.style.setProperty('--indicator-width', `${maxWidth}px`);
-        layout?.style.setProperty('--indicator-width', `${maxWidth}px`);
+        const width = `${maxWidth}px`;
+        list.style.setProperty('--indicator-width', width);
+        layout?.style.setProperty('--indicator-width', width);
+        projects?.style.setProperty('--indicator-width', width);
       }
     };
 
@@ -334,7 +395,7 @@ export function ProjectList({
         data-project-index={index}
         className={`project-item ${isLoadHidden ? 'project-item--hidden' : ''} ${isMeasuring ? 'project-item--load-measuring' : ''} ${isTransitionHidden ? 'project-item--transition-hidden' : ''} ${isTransitionTarget ? 'project-item--transition-target' : ''} ${hasHoverImage ? 'project-item--has-image' : ''} ${isClickable ? 'project-item--clickable' : ''}`}
         aria-hidden={fake || undefined}
-        onMouseEnter={() => handleProjectMouseEnter(project, fake)}
+        onMouseEnter={(event) => handleProjectMouseEnter(project, fake, event.currentTarget)}
         onMouseLeave={() => handleProjectMouseLeave(project._id)}
       >
         {isClickable ? (
@@ -363,7 +424,7 @@ export function ProjectList({
 
   return (
     <>
-      <div ref={listRef}>
+      <div ref={listRef} data-project-list-root>
         {useFixedColumns && fixedColumns ? (
           <div className="project-columns-transition">
             {fixedColumns.map((columnIndices, columnIndex) => (
@@ -376,16 +437,29 @@ export function ProjectList({
           <ul className="project-columns">{projects.map((_, index) => renderProjectItem(index))}</ul>
         )}
       </div>
-      {isTransitioning
-        ? null
-        : hoveredLayouts.map((layout) => (
-            <ProjectHoverImage
-              key={layout.id}
-              layout={layout}
-              exiting={layout.exiting}
-              onExitComplete={removeHoverImage}
-            />
-          ))}
+      {hoveredLayouts.map((layout) => {
+        const transitionTargetProject =
+          isTransitioning && transitionTargetIndex !== null
+            ? projects[transitionTargetIndex]
+            : null;
+        const isTransitionHero =
+          Boolean(transitionTargetProject) && layout.projectId === transitionTargetProject!._id;
+
+        if (isTransitioning && transitionTargetProject && !isTransitionHero) {
+          return null;
+        }
+
+        return (
+          <ProjectHoverImage
+            key={layout.id}
+            layout={layout}
+            exiting={isTransitionHero ? false : layout.exiting}
+            transitionHero={isTransitionHero}
+            opacityRiseMs={PROJECT_TRANSITION_BG_FADE_MS}
+            onExitComplete={removeHoverImage}
+          />
+        );
+      })}
     </>
   );
 }

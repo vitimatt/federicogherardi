@@ -1,10 +1,14 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+
 import type { RandomImageLayout } from '@/app/lib/randomImageLayout';
 
 type ProjectHoverImageProps = {
   layout: RandomImageLayout & { id: string };
   exiting?: boolean;
+  transitionHero?: boolean;
+  opacityRiseMs?: number;
   onExitComplete?: (id: string) => void;
 };
 
@@ -23,10 +27,41 @@ function handleAnimationEnd(
   }
 }
 
-export function ProjectHoverImage({ layout, exiting, onExitComplete }: ProjectHoverImageProps) {
+export function ProjectHoverImage({
+  layout,
+  exiting,
+  transitionHero = false,
+  opacityRiseMs = 1000,
+  onExitComplete,
+}: ProjectHoverImageProps) {
   const { image, isLandscape, top, left, boxWidth, boxHeight, renderWidth, renderHeight, id } =
     layout;
-  const animationClass = exiting ? 'project-hover-image--exit' : 'project-hover-image--enter';
+  const [opacityRiseActive, setOpacityRiseActive] = useState(false);
+
+  useEffect(() => {
+    if (!transitionHero) {
+      setOpacityRiseActive(false);
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setOpacityRiseActive(true);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [transitionHero, id]);
+
+  const animationClass = transitionHero
+    ? `project-hover-image--transition-hero${opacityRiseActive ? ' project-hover-image--transition-hero-active' : ''}`
+    : exiting
+      ? 'project-hover-image--exit'
+      : 'project-hover-image--enter';
+
+  const opacityRiseStyle = transitionHero ? { transitionDuration: `${opacityRiseMs}ms` } : undefined;
 
   if (!isLandscape) {
     return (
@@ -42,6 +77,7 @@ export function ProjectHoverImage({ layout, exiting, onExitComplete }: ProjectHo
           left: `${left}px`,
           width: `${renderWidth}px`,
           height: 'auto',
+          ...opacityRiseStyle,
         }}
         onAnimationEnd={(event) => handleAnimationEnd(event, exiting, id, onExitComplete)}
       />
@@ -57,6 +93,7 @@ export function ProjectHoverImage({ layout, exiting, onExitComplete }: ProjectHo
         left: `${left}px`,
         width: `${boxWidth}px`,
         height: `${boxHeight}px`,
+        ...opacityRiseStyle,
       }}
       onAnimationEnd={(event) => handleAnimationEnd(event, exiting, id, onExitComplete)}
     >
