@@ -62,6 +62,8 @@ type ProjectListProps = {
   transitionHiddenIndices?: Set<number>;
   transitionColumns?: number[][] | null;
   transitionTargetIndex?: number | null;
+  transitionTitleHandoff?: boolean;
+  transitionHeroLayout?: RandomImageLayout | null;
   onProjectNavigate?: (
     project: ProjectListItem,
     index: number,
@@ -71,6 +73,7 @@ type ProjectListProps = {
   currentProjectSlug?: string;
   onCurrentProjectClick?: () => void;
   isMobile?: boolean;
+  isOverlayClosing?: boolean;
 };
 
 function getListScrollContainer(listRoot: HTMLElement): HTMLElement | null {
@@ -130,10 +133,13 @@ export function ProjectList({
   transitionHiddenIndices,
   transitionColumns = null,
   transitionTargetIndex = null,
+  transitionTitleHandoff = false,
+  transitionHeroLayout = null,
   onProjectNavigate,
   currentProjectSlug,
   onCurrentProjectClick,
   isMobile = false,
+  isOverlayClosing = false,
 }: ProjectListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const hoveredProjectRef = useRef<string | null>(null);
@@ -312,6 +318,52 @@ export function ProjectList({
     };
   }, []);
 
+  useEffect(() => {
+    if (!isOverlayClosing) {
+      return;
+    }
+
+    hoveredProjectRef.current = null;
+    fadeTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    fadeTimersRef.current.clear();
+
+    setHoveredLayouts((current) => {
+      if (current.length === 0) {
+        return current;
+      }
+
+      return current.map((entry) => (entry.exiting ? entry : { ...entry, exiting: true }));
+    });
+  }, [isOverlayClosing]);
+
+  useEffect(() => {
+    if (!isTransitioning || transitionTargetIndex === null) {
+      return;
+    }
+
+    const targetProject = projects[transitionTargetIndex];
+
+    if (!targetProject) {
+      return;
+    }
+
+    hoveredProjectRef.current = targetProject._id;
+    fadeTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    fadeTimersRef.current.clear();
+
+    setHoveredLayouts((current) => {
+      if (current.length === 0) {
+        return current;
+      }
+
+      return current.map((entry) =>
+        entry.projectId !== targetProject._id && !entry.exiting
+          ? { ...entry, exiting: true }
+          : entry,
+      );
+    });
+  }, [isTransitioning, projects, transitionTargetIndex]);
+
   useLayoutEffect(() => {
     if (!isOpeningReveal || openingRevealPlan || !onOpeningRevealPlanReady) {
       return;
@@ -393,7 +445,7 @@ export function ProjectList({
       <li
         key={project._id}
         data-project-index={index}
-        className={`project-item ${isLoadHidden ? 'project-item--hidden' : ''} ${isMeasuring ? 'project-item--load-measuring' : ''} ${isTransitionHidden ? 'project-item--transition-hidden' : ''} ${isTransitionTarget ? 'project-item--transition-target' : ''} ${hasHoverImage ? 'project-item--has-image' : ''} ${isClickable ? 'project-item--clickable' : ''}`}
+        className={`project-item ${isLoadHidden ? 'project-item--hidden' : ''} ${isMeasuring ? 'project-item--load-measuring' : ''} ${isTransitionHidden ? 'project-item--transition-hidden' : ''} ${isTransitionTarget ? 'project-item--transition-target' : ''} ${isTransitionTarget && transitionTitleHandoff ? 'project-item--transition-title-handoff' : ''} ${hasHoverImage ? 'project-item--has-image' : ''} ${isClickable ? 'project-item--clickable' : ''}`}
         aria-hidden={fake || undefined}
         onMouseEnter={(event) => handleProjectMouseEnter(project, fake, event.currentTarget)}
         onMouseLeave={() => handleProjectMouseLeave(project._id)}
@@ -422,6 +474,24 @@ export function ProjectList({
       ? transitionColumns
       : openingRevealPlan?.columns ?? null;
 
+  const transitionTargetProject =
+    isTransitioning && transitionTargetIndex !== null
+      ? projects[transitionTargetIndex]
+      : null;
+  const hoveredHeroLayout = transitionTargetProject
+    ? hoveredLayouts.find(
+        (entry) => entry.projectId === transitionTargetProject._id && !entry.exiting,
+      )
+    : null;
+  const fallbackHeroLayout: HoverImageEntry | null =
+    transitionTargetProject && transitionHeroLayout && !hoveredHeroLayout
+      ? {
+          ...transitionHeroLayout,
+          id: `transition-hero-${transitionTargetProject._id}`,
+          projectId: transitionTargetProject._id,
+        }
+      : null;
+
   return (
     <>
       <div ref={listRef} data-project-list-root>
@@ -438,28 +508,29 @@ export function ProjectList({
         )}
       </div>
       {hoveredLayouts.map((layout) => {
-        const transitionTargetProject =
-          isTransitioning && transitionTargetIndex !== null
-            ? projects[transitionTargetIndex]
-            : null;
         const isTransitionHero =
           Boolean(transitionTargetProject) && layout.projectId === transitionTargetProject!._id;
-
-        if (isTransitioning && transitionTargetProject && !isTransitionHero) {
-          return null;
-        }
 
         return (
           <ProjectHoverImage
             key={layout.id}
             layout={layout}
             exiting={isTransitionHero ? false : layout.exiting}
+            exitFast={isOverlayClosing && !isTransitionHero}
             transitionHero={isTransitionHero}
             opacityRiseMs={PROJECT_TRANSITION_BG_FADE_MS}
             onExitComplete={removeHoverImage}
           />
         );
       })}
+      {fallbackHeroLayout ? (
+        <ProjectHoverImage
+          key={fallbackHeroLayout.id}
+          layout={fallbackHeroLayout}
+          transitionHero
+          opacityRiseMs={PROJECT_TRANSITION_BG_FADE_MS}
+        />
+      ) : null}
     </>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { RandomImageLayout } from '@/app/lib/imageLayoutCore';
 
@@ -8,27 +8,33 @@ type ProjectPageImageProps = {
   layout: RandomImageLayout;
   caption: string;
   skipMountFade?: boolean;
+  mountEnabled?: boolean;
   opacityRiseFromHome?: boolean;
   opacityRiseMs?: number;
   mountDelayMs?: number;
   mountFadeMs?: number;
   positionFixed?: boolean;
   onReady?: () => void;
+  onImageClick?: () => void;
 };
 
 export function ProjectPageImage({
   layout,
   caption,
   skipMountFade = false,
+  mountEnabled = true,
   opacityRiseFromHome = false,
   opacityRiseMs = 1000,
   mountDelayMs = 0,
   mountFadeMs = 400,
   positionFixed = false,
   onReady,
+  onImageClick,
 }: ProjectPageImageProps) {
   const { image, isLandscape, top, left, boxWidth, boxHeight, renderWidth, renderHeight } = layout;
-  const [mounting, setMounting] = useState(!skipMountFade && !opacityRiseFromHome);
+  const shouldMountFade = !skipMountFade && !opacityRiseFromHome;
+  const [mountStarted, setMountStarted] = useState(() => shouldMountFade && mountEnabled);
+  const [mounting, setMounting] = useState(mountStarted);
   const [opacityRiseActive, setOpacityRiseActive] = useState(false);
   const [active, setActive] = useState(false);
   const [exiting, setExiting] = useState(false);
@@ -36,11 +42,45 @@ export function ProjectPageImage({
   const imageLoadedRef = useRef(false);
   const opacityDoneRef = useRef(false);
 
+  const tryReportReady = useCallback(() => {
+    if (readyReportedRef.current) {
+      return;
+    }
+
+    if (!imageLoadedRef.current) {
+      return;
+    }
+
+    if (opacityRiseFromHome && !opacityDoneRef.current) {
+      return;
+    }
+
+    readyReportedRef.current = true;
+    onReady?.();
+  }, [onReady, opacityRiseFromHome]);
+
   useEffect(() => {
     readyReportedRef.current = false;
     imageLoadedRef.current = false;
     opacityDoneRef.current = false;
   }, [image.url]);
+
+  useEffect(() => {
+    if (!shouldMountFade || !mountEnabled || mountStarted) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setMountStarted(true);
+        setMounting(true);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [mountEnabled, mountStarted, shouldMountFade]);
 
   useEffect(() => {
     if (!opacityRiseFromHome) {
@@ -69,24 +109,7 @@ export function ProjectPageImage({
       window.cancelAnimationFrame(frame);
       window.clearTimeout(fallback);
     };
-  }, [opacityRiseFromHome, opacityRiseMs, image.url]);
-
-  const tryReportReady = () => {
-    if (readyReportedRef.current) {
-      return;
-    }
-
-    if (!imageLoadedRef.current) {
-      return;
-    }
-
-    if (opacityRiseFromHome && !opacityDoneRef.current) {
-      return;
-    }
-
-    readyReportedRef.current = true;
-    onReady?.();
-  };
+  }, [opacityRiseFromHome, opacityRiseMs, image.url, tryReportReady]);
 
   const handleImageLoad = () => {
     imageLoadedRef.current = true;
@@ -116,17 +139,26 @@ export function ProjectPageImage({
       return;
     }
 
-    if (event.animationName.endsWith('project-page-image-mount-in')) {
+    if (
+      event.animationName.endsWith('project-page-image-mount-in') ||
+      event.animationName.endsWith('project-page-image-caption-mount-in')
+    ) {
       setMounting(false);
       return;
     }
 
-    if (event.animationName.endsWith('project-page-image-fade-out')) {
-      setActive(false);
-      setExiting(false);
+    if (
+      event.animationName.endsWith('project-page-image-hover-in') ||
+      event.animationName.endsWith('project-page-image-hover-out')
+    ) {
+      if (event.animationName.endsWith('project-page-image-hover-out')) {
+        setActive(false);
+        setExiting(false);
+      }
     }
   };
 
+  const pending = shouldMountFade && !mountStarted;
   const mountAnimationClass = mounting ? 'project-page-image--mount' : '';
 
   const imageAnimationClass = exiting
@@ -135,9 +167,12 @@ export function ProjectPageImage({
       ? 'project-page-image--enter'
       : opacityRiseFromHome
         ? `project-page-image--from-home${opacityRiseActive ? ' project-page-image--at-rest' : ''}`
-        : mountAnimationClass;
+        : pending
+          ? 'project-page-image--pending'
+          : mountAnimationClass;
 
-  const captionAnimationClass = mounting && !opacityRiseFromHome ? mountAnimationClass : '';
+  const captionAnimationClass =
+    mounting && !opacityRiseFromHome ? 'project-page-image--mount' : pending ? 'project-page-image--pending' : '';
 
   const animationTimingStyle = mounting
     ? {
@@ -160,6 +195,7 @@ export function ProjectPageImage({
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      onClick={onImageClick}
     >
       <div
         className="project-page-image-frame"
