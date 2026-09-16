@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+
 type OpeningImage = {
   url: string;
   width: number;
@@ -12,6 +14,20 @@ type OpeningScreenProps = {
 };
 
 export function OpeningScreen({ image, fading }: OpeningScreenProps) {
+  const [imageVisible, setImageVisible] = useState(false);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setImageVisible(true);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
   return (
     <div
       className={`opening-screen ${fading ? 'opening-screen--fading' : ''}`}
@@ -22,7 +38,7 @@ export function OpeningScreen({ image, fading }: OpeningScreenProps) {
         width={image.width}
         height={image.height}
         alt=""
-        className="opening-screen__image"
+        className={`opening-screen__image${imageVisible ? ' opening-screen__image--visible' : ''}`}
       />
     </div>
   );

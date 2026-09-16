@@ -7,6 +7,7 @@ import type { RandomImageLayout } from '@/app/lib/randomImageLayout';
 type ProjectHoverImageProps = {
   layout: RandomImageLayout & { id: string };
   exiting?: boolean;
+  exitFast?: boolean;
   transitionHero?: boolean;
   opacityRiseMs?: number;
   onExitComplete?: (id: string) => void;
@@ -22,7 +23,7 @@ function handleAnimationEnd(
     return;
   }
 
-  if (event.animationName.endsWith('project-hover-fade-out')) {
+  if (event.animationName.includes('project-hover-fade-out')) {
     onExitComplete?.(id);
   }
 }
@@ -30,6 +31,7 @@ function handleAnimationEnd(
 export function ProjectHoverImage({
   layout,
   exiting,
+  exitFast = false,
   transitionHero = false,
   opacityRiseMs = 1000,
   onExitComplete,
@@ -58,10 +60,15 @@ export function ProjectHoverImage({
   const animationClass = transitionHero
     ? `project-hover-image--transition-hero${opacityRiseActive ? ' project-hover-image--transition-hero-active' : ''}`
     : exiting
-      ? 'project-hover-image--exit'
+      ? exitFast
+        ? 'project-hover-image--exit-fast'
+        : 'project-hover-image--exit'
       : 'project-hover-image--enter';
 
-  const opacityRiseStyle = transitionHero ? { transitionDuration: `${opacityRiseMs}ms` } : undefined;
+  const opacityRiseStyle =
+    transitionHero && opacityRiseMs !== 1000
+      ? { transitionDuration: `${opacityRiseMs}ms` }
+      : undefined;
 
   if (!isLandscape) {
     return (

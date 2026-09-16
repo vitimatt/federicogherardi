@@ -3,11 +3,12 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { ProjectImageSlider } from '@/app/components/ProjectImageSlider';
-import { ProjectList, type ProjectListItem, PROJECT_HOVER_FADE_OUT_MS } from '@/app/components/ProjectList';
-import { ProjectPageImage } from '@/app/components/ProjectPageImage';
-import { SiteInfo } from '@/app/components/SiteInfo';
 import { useFontsReady } from '@/app/components/FontReadyProvider';
+import { ProjectImageSlider } from '@/app/components/ProjectImageSlider';
+import { ProjectList, type ProjectListItem } from '@/app/components/ProjectList';
+import { ProjectPageImage } from '@/app/components/ProjectPageImage';
+import { ProjectPageImageLightbox } from '@/app/components/ProjectPageImageLightbox';
+import { SiteInfo } from '@/app/components/SiteInfo';
 import { useSiteInfo } from '@/app/components/SiteInfoProvider';
 import { formatProjectMeta } from '@/app/lib/formatProjectMeta';
 import {
@@ -22,8 +23,11 @@ import {
   dispatchProjectTransitionStart,
   flattenHideSteps,
   getProjectHideStepForCombinedStep,
+  getProjectTransitionRemainingMs,
   getSiteInfoTransitionHiddenIndices,
   PROJECT_TRANSITION_BG_FADE_MS,
+  readProjectTransition,
+  saveProjectTransition,
   setProjectPageBackground,
   startHomeBackgroundTransition,
   startProjectPageBackgroundTransition,
@@ -57,7 +61,9 @@ const PROJECT_PAGE_MOUNT_STAGGER_MS = 50;
 const SCROLL_BOTTOM_THRESHOLD_PX = 1;
 const LIST_REVEAL_INTERVAL_MS = 80;
 const LIST_HIDE_INTERVAL_MS = 80;
+const PROJECT_NAVIGATE_HIDE_INTERVAL_MS = 80;
 const SCROLL_TO_TOP_MS = 1200;
+const FIXED_TITLE_FADE_MS = 400;
 
 type ActiveTransition = {
   slug: string;
@@ -84,24 +90,25 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   const overlayCloseTimerRef = useRef<number | null>(null);
   const scrollToTopFrameRef = useRef<number | null>(null);
   const transitionRef = useRef<ActiveTransition | null>(null);
-  const transitionStartRef = useRef<number>(0);
   const transitionHideTimerRef = useRef<number | null>(null);
   const navigateTimerRef = useRef<number | null>(null);
   const homeNavigateTimerRef = useRef<number | null>(null);
   const isHomeNavigatingRef = useRef(false);
+  const sliderOpenRef = useRef(false);
+  const sliderCloseRef = useRef<(() => void) | null>(null);
+  const mobileScrollFocusRafRef = useRef<number | null>(null);
+  const fixedTitleFadeTimerRef = useRef<number | null>(null);
+  const handoffCompletedRef = useRef(false);
+  const [fromTransition, setFromTransition] =
+    useState<ReturnType<typeof readProjectTransition>>(null);
   const [layouts, setLayouts] = useState<ReturnType<typeof buildProjectPageImageLayouts> | null>(
     null,
   );
   const [canvasHeight, setCanvasHeight] = useState<number | null>(null);
-  const [metaEntering, setMetaEntering] = useState(true);
-  const [sliderIndex, setSliderIndex] = useState<number | null>(null);
-  const sliderOpenRef = useRef(false);
-  const sliderCloseRef = useRef<(() => void) | null>(null);
-  const [mobileFocusedImageIndex, setMobileFocusedImageIndex] = useState(0);
-  const mobileScrollFocusRafRef = useRef<number | null>(null);
+  const [imageHandoffFixed, setImageHandoffFixed] = useState(false);
+  const [secondaryMounting, setSecondaryMounting] = useState(true);
   const [listOverlayActive, setListOverlayActive] = useState(false);
-  const [overlayBlack, setOverlayBlack] = useState(false);
-  const [overlayFadeMs, setOverlayFadeMs] = useState(PROJECT_TRANSITION_BG_FADE_MS);
+  const [listOverlayFading, setListOverlayFading] = useState(false);
   const [listRevealPlan, setListRevealPlan] = useState<ColumnHidePlan | null>(null);
   const [listRevealStep, setListRevealStep] = useState(0);
   const [listRevealComplete, setListRevealComplete] = useState(false);
@@ -112,7 +119,11 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   const [transitionHideStep, setTransitionHideStep] = useState(0);
   const [siteInfoRevealStep, setSiteInfoRevealStep] = useState(0);
   const [siteInfoRevealComplete, setSiteInfoRevealComplete] = useState(false);
-  const { layoutMode, isMobile, information, setTransitionHidden } = useSiteInfo();
+  const [fixedTitleHidden, setFixedTitleHidden] = useState(false);
+  const [lightboxLayout, setLightboxLayout] = useState<RandomImageLayout | null>(null);
+  const [sliderIndex, setSliderIndex] = useState<number | null>(null);
+  const [mobileFocusedImageIndex, setMobileFocusedImageIndex] = useState(0);
+  const { layoutMode, isMobile, information } = useSiteInfo();
   const fontsReady = useFontsReady();
 
   const siteInfoSectionCount = useMemo(
@@ -137,19 +148,9 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
         : new Set<number>(),
     [listHidePlan, listHideStep, siteInfoSectionCount],
   );
-  const totalListHideSteps = (listHidePlan?.hideSteps.length ?? 0) + siteInfoSectionCount;
-  const isListHideComplete =
-    listHiding && listHidePlan !== null && listHideStep >= totalListHideSteps;
   const isProjectNavigating = activeTransition !== null;
-  const listOverlayPointerActive = listOverlayActive && !listHiding && !isProjectNavigating;
-  const listMenuOwnsTitleSlot =
-    listOverlayActive &&
-    !isListHideComplete &&
-    (listHiding || isProjectNavigating || listRevealComplete || listRevealStep > 0);
-  const showProjectMeta = fontsReady && !listMenuOwnsTitleSlot;
-  const projectMetaClassName = `project-page__meta${showProjectMeta ? '' : ' project-page__meta--hidden'}${
-    metaEntering && showProjectMeta ? ' project-page__meta--entering' : ''
-  }${sliderIndex !== null ? ' project-page__meta--above-slider' : ''}`;
+  const hideFixedProjectMeta = fixedTitleHidden || listHiding || isProjectNavigating;
+  const projectMetaClassName = `project-page__meta project-page__meta--fixed${hideFixedProjectMeta ? ' project-page__meta--hidden' : ''}${sliderIndex !== null ? ' project-page__meta--above-slider' : ''}`;
   const transitionHiddenIndices = useMemo(
     () =>
       activeTransition
@@ -238,10 +239,18 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     }
   }, []);
 
+  const clearFixedTitleFadeTimer = useCallback(() => {
+    if (fixedTitleFadeTimerRef.current !== null) {
+      window.clearTimeout(fixedTitleFadeTimerRef.current);
+      fixedTitleFadeTimerRef.current = null;
+    }
+  }, []);
+
   const resetListReveal = useCallback(() => {
     clearListRevealTimer();
     clearListHideTimer();
     clearSiteInfoRevealTimer();
+    clearFixedTitleFadeTimer();
     setListRevealPlan(null);
     setListRevealStep(0);
     setListRevealComplete(false);
@@ -250,11 +259,24 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     setListHideStep(0);
     setSiteInfoRevealStep(0);
     setSiteInfoRevealComplete(false);
-  }, [clearListHideTimer, clearListRevealTimer, clearSiteInfoRevealTimer]);
+    setFixedTitleHidden(false);
+  }, [clearFixedTitleFadeTimer, clearListHideTimer, clearListRevealTimer, clearSiteInfoRevealTimer]);
 
-  const setOverlayBackground = useCallback((black: boolean, durationMs = PROJECT_TRANSITION_BG_FADE_MS) => {
-    setOverlayFadeMs(durationMs);
-    setOverlayBlack(black);
+  const clearBackgroundFadeDuration = useCallback(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    document.documentElement.style.removeProperty('--project-bg-fade-ms');
+  }, []);
+
+  const beginBackgroundFadeToWhite = useCallback((durationMs: number) => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    document.documentElement.style.setProperty('--project-bg-fade-ms', `${durationMs}ms`);
+    setListOverlayFading(false);
   }, []);
 
   const finishCloseListOverlay = useCallback(() => {
@@ -268,9 +290,10 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     }
 
     setListOverlayActive(false);
-    setOverlayBlack(false);
+    setListOverlayFading(false);
     resetListReveal();
-  }, [clearListHideTimer, resetListReveal]);
+    clearBackgroundFadeDuration();
+  }, [clearBackgroundFadeDuration, clearListHideTimer, resetListReveal]);
 
   const scheduleFinishClose = useCallback(
     (totalHideSteps: number) => {
@@ -280,10 +303,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
       const hideDuration =
         totalHideSteps <= 1 ? 0 : (totalHideSteps - 1) * LIST_HIDE_INTERVAL_MS;
-      const totalCloseMs = Math.max(
-        hideDuration + PROJECT_HOVER_FADE_OUT_MS,
-        PROJECT_TRANSITION_BG_FADE_MS,
-      );
+      const totalCloseMs = Math.max(hideDuration, PROJECT_TRANSITION_BG_FADE_MS);
 
       overlayCloseTimerRef.current = window.setTimeout(() => {
         finishCloseListOverlay();
@@ -306,8 +326,14 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     isListClosingRef.current = false;
     resetListReveal();
     setListOverlayActive(true);
-    setOverlayBackground(true);
-  }, [resetListReveal, setOverlayBackground]);
+    setListOverlayFading(false);
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setListOverlayFading(true);
+      });
+    });
+  }, [resetListReveal]);
 
   const startCloseListOverlay = useCallback(
     (options?: { skipBackgroundFade?: boolean }) => {
@@ -320,7 +346,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       setListHiding(true);
 
       if (!options?.skipBackgroundFade) {
-        setOverlayBackground(false);
+        beginBackgroundFadeToWhite(PROJECT_TRANSITION_BG_FADE_MS);
       }
 
       const listItems = layoutRef.current?.querySelectorAll<HTMLElement>('.project-item');
@@ -361,7 +387,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       });
     },
     [
-      setOverlayBackground,
+      beginBackgroundFadeToWhite,
       clearListHideTimer,
       clearListRevealTimer,
       information,
@@ -418,6 +444,28 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     [cancelScrollToTop],
   );
 
+  const handleCurrentProjectClick = useCallback(() => {
+    if (!listOverlayRef.current || isProjectNavigating) {
+      return;
+    }
+
+    const page = pageRef.current;
+    const fadeMs =
+      page && page.scrollTop > 0 ? SCROLL_TO_TOP_MS : PROJECT_TRANSITION_BG_FADE_MS;
+
+    beginBackgroundFadeToWhite(fadeMs);
+    scrollPageToTop();
+
+    if (!isListClosingRef.current) {
+      startCloseListOverlay({ skipBackgroundFade: true });
+    }
+  }, [
+    beginBackgroundFadeToWhite,
+    isProjectNavigating,
+    scrollPageToTop,
+    startCloseListOverlay,
+  ]);
+
   const navigateHome = useCallback(() => {
     if (isHomeNavigatingRef.current || isProjectNavigating || listHiding) {
       return;
@@ -426,22 +474,14 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     isHomeNavigatingRef.current = true;
     sliderOpenRef.current = false;
     setSliderIndex(null);
-    setTransitionHidden(true);
+    setLightboxLayout(null);
     router.prefetch('/');
     startHomeBackgroundTransition();
 
     homeNavigateTimerRef.current = window.setTimeout(() => {
       router.push('/');
     }, PROJECT_TRANSITION_BG_FADE_MS);
-  }, [isProjectNavigating, listHiding, router, setTransitionHidden]);
-
-  const handleTitleClick = useCallback(() => {
-    if (listOverlayRef.current) {
-      return;
-    }
-
-    navigateHome();
-  }, [navigateHome]);
+  }, [isProjectNavigating, listHiding, router]);
 
   const handleMobileCloseClick = useCallback(() => {
     if (sliderIndex !== null) {
@@ -459,28 +499,6 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     navigateHome();
   }, [navigateHome, sliderIndex, startCloseListOverlay]);
 
-  const handleCurrentProjectClick = useCallback(() => {
-    if (!listOverlayRef.current || isProjectNavigating) {
-      return;
-    }
-
-    const page = pageRef.current;
-    const fadeMs =
-      page && page.scrollTop > 0 ? SCROLL_TO_TOP_MS : PROJECT_TRANSITION_BG_FADE_MS;
-
-    setOverlayBackground(false, fadeMs);
-    scrollPageToTop();
-
-    if (!isListClosingRef.current) {
-      startCloseListOverlay({ skipBackgroundFade: true });
-    }
-  }, [
-    setOverlayBackground,
-    isProjectNavigating,
-    scrollPageToTop,
-    startCloseListOverlay,
-  ]);
-
   const clearProjectNavigateTimers = useCallback(() => {
     if (transitionHideTimerRef.current !== null) {
       window.clearInterval(transitionHideTimerRef.current);
@@ -495,12 +513,9 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
   const scheduleProjectNavigation = useCallback(
     (slug: string) => {
-      const elapsed = performance.now() - transitionStartRef.current;
-      const delay = Math.max(PROJECT_TRANSITION_BG_FADE_MS - elapsed, 0);
-
       navigateTimerRef.current = window.setTimeout(() => {
         router.push(`/projects/${slug}`);
-      }, delay);
+      }, 0);
     },
     [router],
   );
@@ -520,55 +535,149 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
       clearListRevealTimer();
       clearProjectNavigateTimers();
+
+      saveProjectTransition({
+        slug,
+        projectId: targetProject._id,
+        projectIndex: index,
+        layout,
+        category: targetProject.category,
+        title: targetProject.title,
+        client: targetProject.client,
+        imageCount: targetProject.imageCount,
+      });
+
       router.prefetch(`/projects/${slug}`);
 
+      const { hideSteps, columns } = hidePlan;
       const transition: ActiveTransition = {
         slug,
         projectIndex: index,
         layout,
-        hideSteps: [],
-        columns: hidePlan.columns,
+        hideSteps,
+        columns,
       };
 
       transitionRef.current = transition;
-      transitionStartRef.current = performance.now();
       startProjectPageBackgroundTransition();
       dispatchProjectTransitionStart();
+      setListOverlayFading(false);
       setActiveTransition(transition);
-      setTransitionHidden(true);
       setTransitionHideStep(0);
       clearSiteInfoRevealTimer();
       setSiteInfoRevealStep(0);
       setSiteInfoRevealComplete(false);
-      scheduleProjectNavigation(slug);
+
+      const mobileSiteInfoSectionCount = isMobile ? getSiteInfoInlineSectionCount(information) : 0;
+      const totalHideSteps = mobileSiteInfoSectionCount + hideSteps.length;
+
+      if (totalHideSteps === 0) {
+        scheduleProjectNavigation(slug);
+        return;
+      }
+
+      const startHideSequence = () => {
+        setTransitionHideStep(1);
+
+        if (totalHideSteps === 1) {
+          scheduleProjectNavigation(slug);
+          return;
+        }
+
+        transitionHideTimerRef.current = window.setInterval(() => {
+          setTransitionHideStep((currentStep) => {
+            const nextStep = currentStep + 1;
+            const steps =
+              (transitionRef.current?.hideSteps.length ?? 0) + mobileSiteInfoSectionCount;
+
+            if (nextStep >= steps) {
+              if (transitionHideTimerRef.current !== null) {
+                window.clearInterval(transitionHideTimerRef.current);
+                transitionHideTimerRef.current = null;
+              }
+
+              if (transitionRef.current) {
+                scheduleProjectNavigation(transitionRef.current.slug);
+              }
+            }
+
+            return nextStep;
+          });
+        }, PROJECT_NAVIGATE_HIDE_INTERVAL_MS);
+      };
+
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(startHideSequence);
+      });
     },
     [
       clearListRevealTimer,
       clearProjectNavigateTimers,
       clearSiteInfoRevealTimer,
+      information,
+      isMobile,
       isProjectNavigating,
       listHiding,
       router,
       scheduleProjectNavigation,
-      setTransitionHidden,
     ],
   );
 
   useLayoutEffect(() => {
-    const nextLayouts = buildProjectPageImageLayouts(project.images);
+    if (typeof document === 'undefined') {
+      return;
+    }
 
+    const className = 'body--project-page-list-black';
+
+    if (listOverlayFading) {
+      document.documentElement.classList.add(className);
+      document.body.classList.add(className);
+    } else {
+      document.documentElement.classList.remove(className);
+      document.body.classList.remove(className);
+    }
+
+    return () => {
+      document.documentElement.classList.remove(className);
+      document.body.classList.remove(className);
+    };
+  }, [listOverlayFading]);
+
+  const handleHeroImageReady = useCallback(() => {
+    if (!fromTransition || handoffCompletedRef.current) {
+      return;
+    }
+
+    handoffCompletedRef.current = true;
+    pageRef.current?.scrollTo(0, 0);
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        clearProjectTransition();
+        dispatchProjectTransitionEnd();
+        setImageHandoffFixed(false);
+        setProjectPageBackground(true);
+      });
+    });
+  }, [fromTransition]);
+
+  useLayoutEffect(() => {
+    handoffCompletedRef.current = false;
+    const transition = readProjectTransition(project.slug);
+    const nextLayouts = buildProjectPageImageLayouts(project.images, transition?.layout ?? null);
+
+    setFromTransition(transition);
     setLayouts(nextLayouts);
     setCanvasHeight(getProjectPageCanvasHeight(nextLayouts));
-    setMetaEntering(true);
+    setImageHandoffFixed(Boolean(transition));
+    setSecondaryMounting(!transition);
     setSliderIndex(null);
     sliderOpenRef.current = false;
+    setLightboxLayout(null);
     setMobileFocusedImageIndex(0);
-    setTransitionHidden(false);
     pageRef.current?.scrollTo(0, 0);
-    clearProjectTransition();
-    dispatchProjectTransitionEnd();
-    setProjectPageBackground(true);
-  }, [project.slug, project.images, setTransitionHidden]);
+  }, [project.slug, project.images]);
 
   const updateMobileScrollFocusedImage = useCallback(() => {
     const page = pageRef.current;
@@ -641,19 +750,13 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     updateMobileScrollFocusedImage();
   }, [isMobile, sliderIndex, updateMobileScrollFocusedImage]);
 
-  useEffect(() => {
-    if (!fontsReady || !showProjectMeta || !metaEntering) {
+  useLayoutEffect(() => {
+    if (!fromTransition || !layouts || secondaryMounting) {
       return;
     }
 
-    const timer = window.setTimeout(() => {
-      setMetaEntering(false);
-    }, PROJECT_PAGE_MOUNT_FADE_MS);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [fontsReady, metaEntering, showProjectMeta]);
+    setSecondaryMounting(true);
+  }, [fromTransition, layouts, secondaryMounting]);
 
   useLayoutEffect(() => {
     if (!listRevealPlan || !isListRevealActive) {
@@ -665,8 +768,18 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       return;
     }
 
-    setListRevealStep(1);
-  }, [isListRevealActive, listRevealPlan]);
+    setFixedTitleHidden(true);
+
+    clearFixedTitleFadeTimer();
+    fixedTitleFadeTimerRef.current = window.setTimeout(() => {
+      fixedTitleFadeTimerRef.current = null;
+      setListRevealStep(1);
+    }, FIXED_TITLE_FADE_MS);
+
+    return () => {
+      clearFixedTitleFadeTimer();
+    };
+  }, [clearFixedTitleFadeTimer, isListRevealActive, listRevealPlan]);
 
   useEffect(() => {
     if (!listRevealPlan || !isListRevealActive) {
@@ -806,7 +919,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
         return;
       }
 
-      if (isMobile || event.deltaY <= 0 || !isAtBottom()) {
+      if (event.deltaY <= 0 || !isAtBottom()) {
         return;
       }
 
@@ -838,7 +951,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
         return;
       }
 
-      if (isMobile || deltaY <= 0 || !isAtBottom()) {
+      if (deltaY <= 0 || !isAtBottom()) {
         return;
       }
 
@@ -855,7 +968,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       page.removeEventListener('touchstart', handleTouchStart);
       page.removeEventListener('touchmove', handleTouchMove);
     };
-  }, [handleOverlayScrollUp, isAtBottom, isMobile, openListOverlay]);
+  }, [handleOverlayScrollUp, isAtBottom, openListOverlay]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -902,39 +1015,31 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
   useEffect(() => {
     return () => {
-      if (revealTimerRef.current !== null) {
-        window.clearInterval(revealTimerRef.current);
-      }
-
-      if (hideTimerRef.current !== null) {
-        window.clearInterval(hideTimerRef.current);
-      }
-
-      if (siteInfoRevealTimerRef.current !== null) {
-        window.clearInterval(siteInfoRevealTimerRef.current);
-      }
-
-      if (transitionHideTimerRef.current !== null) {
-        window.clearInterval(transitionHideTimerRef.current);
-      }
-
-      if (navigateTimerRef.current !== null) {
-        window.clearTimeout(navigateTimerRef.current);
-      }
-
-      if (homeNavigateTimerRef.current !== null) {
-        window.clearTimeout(homeNavigateTimerRef.current);
-      }
+      clearListRevealTimer();
+      clearListHideTimer();
+      clearSiteInfoRevealTimer();
+      clearProjectNavigateTimers();
+      clearFixedTitleFadeTimer();
+      cancelScrollToTop();
+      clearBackgroundFadeDuration();
 
       if (overlayCloseTimerRef.current !== null) {
         window.clearTimeout(overlayCloseTimerRef.current);
       }
 
-      if (scrollToTopFrameRef.current !== null) {
-        window.cancelAnimationFrame(scrollToTopFrameRef.current);
+      if (homeNavigateTimerRef.current !== null) {
+        window.clearTimeout(homeNavigateTimerRef.current);
       }
     };
-  }, []);
+  }, [
+    cancelScrollToTop,
+    clearBackgroundFadeDuration,
+    clearFixedTitleFadeTimer,
+    clearListHideTimer,
+    clearListRevealTimer,
+    clearProjectNavigateTimers,
+    clearSiteInfoRevealTimer,
+  ]);
 
   return (
     <>
@@ -949,7 +1054,11 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
           CLOSE
         </button>
       ) : null}
-      <header className={projectMetaClassName} onClick={handleTitleClick}>
+      <main
+        ref={pageRef}
+        className={`project-page${listOverlayActive ? ' project-page--list-overlay-active' : ''}${listOverlayFading ? ' project-page--list-overlay-visible' : ''}${listHiding ? ' project-page--list-overlay-closing' : ''}${isProjectNavigating ? ' project-page--navigating' : ''}`}
+      >
+      <header className={projectMetaClassName}>
         <span className="project-page__indicator text-secondary">
           <span className="project-page__indicator-sizer" aria-hidden>
             {formatProjectMeta(project.category, project.images.length)}
@@ -966,39 +1075,42 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
           {project.title} — {project.client}
         </span>
       </header>
-      <div
-        className={`project-page__scrim${overlayBlack ? ' project-page__scrim--on' : ''}`}
-        style={{ transitionDuration: `${overlayFadeMs}ms` }}
-        aria-hidden
-      />
-      <main
-        ref={pageRef}
-        className={`project-page${listOverlayActive ? ' project-page--list-overlay-active' : ''}${listHiding ? ' project-page--list-overlay-closing' : ''}${isProjectNavigating ? ' project-page--navigating' : ''}`}
-      >
-        <div className="project-page__canvas" style={{ height: `${canvasHeight ?? 0}px` }}>
+      <div className="project-page__canvas" style={{ height: `${canvasHeight ?? 0}px` }}>
           {layouts?.map((layout, index) => (
               <ProjectPageImage
                 key={layout.image.url}
                 layout={layout}
                 caption={String(index + 1).padStart(2, '0')}
-                mountDelayMs={index * PROJECT_PAGE_MOUNT_STAGGER_MS}
+                skipMountFade={Boolean(fromTransition && index === 0)}
+                mountEnabled={index === 0 || !fromTransition || secondaryMounting}
+                opacityRiseFromHome={Boolean(fromTransition && index === 0)}
+                opacityRiseMs={
+                  fromTransition && index === 0
+                    ? getProjectTransitionRemainingMs(fromTransition.startedAt)
+                    : undefined
+                }
+                positionFixed={Boolean(fromTransition && index === 0 && imageHandoffFixed)}
+                mountDelayMs={index > 0 ? (index - 1) * PROJECT_PAGE_MOUNT_STAGGER_MS : 0}
                 mountFadeMs={PROJECT_PAGE_MOUNT_FADE_MS}
+                onReady={fromTransition && index === 0 ? handleHeroImageReady : undefined}
                 scrollFocused={isMobile && mobileFocusedImageIndex === index}
-                onOpen={() => {
-                  if (listOverlayRef.current || isProjectNavigating) {
-                    return;
-                  }
-
-                  sliderOpenRef.current = true;
-                  setSliderIndex(index);
-                }}
+                onImageClick={
+                  listOverlayActive || isProjectNavigating
+                    ? undefined
+                    : isMobile
+                      ? () => {
+                          sliderOpenRef.current = true;
+                          setSliderIndex(index);
+                        }
+                      : () => setLightboxLayout(layout)
+                }
               />
-          ))}
+            ))}
         </div>
       {listOverlayActive ? (
         <div
           ref={overlayRef}
-          className={`project-page__list-overlay${listOverlayPointerActive ? ' project-page__list-overlay--visible' : ''}${listHiding ? ' project-page__list-overlay--closing' : ''}`}
+          className={`project-page__list-overlay${listOverlayFading ? ' project-page__list-overlay--visible' : ''}${listHiding ? ' project-page__list-overlay--closing' : ''}`}
         >
           <div
             ref={layoutRef}
@@ -1011,16 +1123,17 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
               openingRevealedIndices={listRevealedIndices}
               onOpeningRevealPlanReady={handleListRevealPlanReady}
               isTransitioning={listHiding || isProjectNavigating}
-              dismissHoverImages={isProjectNavigating || isListHideComplete}
               transitionHiddenIndices={transitionHiddenIndices}
               transitionColumns={
                 activeTransition?.columns ?? listHidePlan?.columns ?? listRevealPlan?.columns ?? null
               }
               transitionTargetIndex={activeTransition?.projectIndex ?? null}
+              transitionHeroLayout={activeTransition?.layout ?? null}
               onProjectNavigate={handleProjectNavigate}
               currentProjectSlug={project.slug}
               onCurrentProjectClick={handleCurrentProjectClick}
               isMobile={isMobile}
+              isOverlayClosing={listHiding}
             />
             {isMobile ? (
               <SiteInfo
@@ -1033,6 +1146,12 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
             ) : null}
           </div>
         </div>
+      ) : null}
+      {!isMobile && lightboxLayout ? (
+        <ProjectPageImageLightbox
+          layout={lightboxLayout}
+          onClose={() => setLightboxLayout(null)}
+        />
       ) : null}
       </main>
       {sliderIndex !== null ? (

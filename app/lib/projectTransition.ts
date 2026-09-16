@@ -13,7 +13,9 @@ export type ProjectTransitionPayload = {
 };
 
 export const PROJECT_TRANSITION_BG_FADE_MS = 1000;
-export const PROJECT_TRANSITION_HERO_RISE_MS = 800;
+
+/** @deprecated Use PROJECT_TRANSITION_BG_FADE_MS — hero opacity rise is synced to background fade. */
+export const PROJECT_TRANSITION_HERO_RISE_MS = PROJECT_TRANSITION_BG_FADE_MS;
 
 export type ColumnHidePlan = {
   hideSteps: number[][];
