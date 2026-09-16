@@ -23,6 +23,7 @@ export type ColumnHidePlan = {
 const STORAGE_KEY = 'project-transition';
 const PROJECT_PAGE_BODY_CLASS = 'body--project-page';
 const PROJECT_TRANSITION_BODY_CLASS = 'body--project-transition';
+const HOME_TRANSITION_BODY_CLASS = 'body--home-transition';
 
 export const PROJECT_TRANSITION_START_EVENT = 'project-transition-start';
 export const PROJECT_TRANSITION_RISE_EVENT = 'project-transition-rise';
@@ -69,13 +70,44 @@ export function setProjectPageBackground(active: boolean) {
   if (active) {
     document.documentElement.classList.add(PROJECT_PAGE_BODY_CLASS);
     document.body.classList.add(PROJECT_PAGE_BODY_CLASS);
-    document.documentElement.classList.remove(PROJECT_TRANSITION_BODY_CLASS);
-    document.body.classList.remove(PROJECT_TRANSITION_BODY_CLASS);
+    document.documentElement.classList.remove(PROJECT_TRANSITION_BODY_CLASS, HOME_TRANSITION_BODY_CLASS);
+    document.body.classList.remove(PROJECT_TRANSITION_BODY_CLASS, HOME_TRANSITION_BODY_CLASS);
     return;
   }
 
   document.documentElement.classList.remove(PROJECT_PAGE_BODY_CLASS, PROJECT_TRANSITION_BODY_CLASS);
   document.body.classList.remove(PROJECT_PAGE_BODY_CLASS, PROJECT_TRANSITION_BODY_CLASS);
+}
+
+export function startHomeBackgroundTransition() {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  document.documentElement.classList.remove(PROJECT_PAGE_BODY_CLASS, PROJECT_TRANSITION_BODY_CLASS);
+  document.body.classList.remove(PROJECT_PAGE_BODY_CLASS, PROJECT_TRANSITION_BODY_CLASS);
+  document.documentElement.classList.add(HOME_TRANSITION_BODY_CLASS);
+  document.body.classList.add(HOME_TRANSITION_BODY_CLASS);
+}
+
+export function clearHomeBackgroundTransition() {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  document.documentElement.classList.remove(HOME_TRANSITION_BODY_CLASS);
+  document.body.classList.remove(HOME_TRANSITION_BODY_CLASS);
+}
+
+export function isHomeBackgroundTransitionActive() {
+  if (typeof document === 'undefined') {
+    return false;
+  }
+
+  return (
+    document.body.classList.contains(HOME_TRANSITION_BODY_CLASS) ||
+    document.documentElement.classList.contains(HOME_TRANSITION_BODY_CLASS)
+  );
 }
 
 export function saveProjectTransition(

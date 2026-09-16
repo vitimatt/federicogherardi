@@ -3,7 +3,7 @@
  * -------------------------
  *
  * IMAGE 1
- * - Carried over from homepage hover (same position), OR random viewport position on direct visit.
+ * - Random viewport position.
  *
  * IMAGES 2+
  * - Each relates only to the image directly above it.

@@ -11,6 +11,7 @@ import {
   type SetStateAction,
 } from 'react';
 
+import { useFontsReady } from '@/app/components/FontReadyProvider';
 import { SiteInfo, type SiteInformation } from '@/app/components/SiteInfo';
 import { useHomeLayout, type HomeLayoutMode } from '@/app/hooks/useHomeLayout';
 
@@ -34,6 +35,7 @@ export function SiteInfoProvider({ information, children }: SiteInfoProviderProp
   const siteInfoRef = useRef<HTMLDivElement>(null);
   const [transitionHidden, setTransitionHidden] = useState(false);
   const { layoutMode, isMobile } = useHomeLayout(siteInfoRef);
+  const fontsReady = useFontsReady();
   const showFixedSiteInfo = !isMobile;
 
   return (
@@ -45,7 +47,7 @@ export function SiteInfoProvider({ information, children }: SiteInfoProviderProp
           ref={siteInfoRef}
           information={information}
           isMobile={isMobile}
-          className={transitionHidden ? 'site-info--transition-hidden' : undefined}
+          className={`${transitionHidden ? 'site-info--transition-hidden' : ''} ${fontsReady ? '' : 'invisible'}`.trim() || undefined}
         />
       ) : null}
       {children}

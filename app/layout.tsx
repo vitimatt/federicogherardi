@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import { FontReadyProvider } from '@/app/components/FontReadyProvider';
 import { PageBackgroundController } from '@/app/components/PageBackgroundController';
 import { SiteInfoProvider } from '@/app/components/SiteInfoProvider';
 import { toSiteInformation, SITE_INFORMATION_QUERY, type SiteInformationRecord } from '@/app/lib/siteInformation';
@@ -27,11 +28,32 @@ export default async function RootLayout({
 
   return (
     <html lang="en">
+      <head>
+        <link
+          rel="preload"
+          href="/fonts/primary/FG-Font.ttf"
+          as="font"
+          type="font/ttf"
+          crossOrigin="anonymous"
+        />
+        <link
+          rel="preload"
+          href="/fonts/secondary/OCR-A.ttf"
+          as="font"
+          type="font/ttf"
+          crossOrigin="anonymous"
+        />
+        <noscript>
+          <style>{`html:not(.fonts-ready) :is(.text-primary, .text-secondary) { opacity: 1 !important; }`}</style>
+        </noscript>
+      </head>
       <body>
         <PageBackgroundController />
-        <SiteInfoProvider information={toSiteInformation(information)}>
-          {children}
-        </SiteInfoProvider>
+        <FontReadyProvider>
+          <SiteInfoProvider information={toSiteInformation(information)}>
+            {children}
+          </SiteInfoProvider>
+        </FontReadyProvider>
       </body>
     </html>
   );

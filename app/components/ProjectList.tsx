@@ -45,6 +45,7 @@ function pickRandomImage(images: ProjectImage[]) {
 
 const MAX_HOVER_IMAGES = 2;
 const HOVER_FADE_DELAY_MS = 2000;
+export const PROJECT_HOVER_FADE_OUT_MS = 400;
 
 type HoverImageEntry = RandomImageLayout & {
   id: string;
@@ -59,6 +60,7 @@ type ProjectListProps = {
   openingRevealedIndices?: Set<number> | null;
   onOpeningRevealPlanReady?: (plan: ColumnHidePlan) => void;
   isTransitioning?: boolean;
+  dismissHoverImages?: boolean;
   transitionHiddenIndices?: Set<number>;
   transitionColumns?: number[][] | null;
   transitionTargetIndex?: number | null;
@@ -127,6 +129,7 @@ export function ProjectList({
   openingRevealedIndices = null,
   onOpeningRevealPlanReady,
   isTransitioning = false,
+  dismissHoverImages = false,
   transitionHiddenIndices,
   transitionColumns = null,
   transitionTargetIndex = null,
@@ -267,7 +270,7 @@ export function ProjectList({
     fake: boolean,
     itemElement: HTMLElement,
   ) => {
-    if (isTransitioning) {
+    if (isMobile || isTransitioning) {
       return;
     }
 
@@ -292,7 +295,7 @@ export function ProjectList({
   };
 
   const handleProjectMouseLeave = (projectId: string) => {
-    if (isTransitioning) {
+    if (isMobile || isTransitioning) {
       return;
     }
 
@@ -311,6 +314,24 @@ export function ProjectList({
       timers.clear();
     };
   }, []);
+
+  useEffect(() => {
+    if (!dismissHoverImages) {
+      return;
+    }
+
+    fadeTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    fadeTimersRef.current.clear();
+    hoveredProjectRef.current = null;
+
+    setHoveredLayouts((current) => {
+      if (current.length === 0 || current.every((entry) => entry.exiting)) {
+        return current;
+      }
+
+      return current.map((entry) => (entry.exiting ? entry : { ...entry, exiting: true }));
+    });
+  }, [dismissHoverImages]);
 
   useLayoutEffect(() => {
     if (!isOpeningReveal || openingRevealPlan || !onOpeningRevealPlanReady) {

@@ -3,18 +3,18 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
+import { useFontsReady } from '@/app/components/FontReadyProvider';
 import { OpeningScreen } from '@/app/components/OpeningScreen';
 import { ProjectList, type ProjectListItem } from '@/app/components/ProjectList';
 import { SiteInfo } from '@/app/components/SiteInfo';
 import { useSiteInfo } from '@/app/components/SiteInfoProvider';
 import {
   buildSequentialRevealSteps,
+  clearHomeBackgroundTransition,
   dispatchProjectTransitionStart,
   flattenHideSteps,
-  getProjectHideStepForCombinedStep,
-  getSiteInfoTransitionHiddenIndices,
+  isHomeBackgroundTransitionActive,
   PROJECT_TRANSITION_BG_FADE_MS,
-  saveProjectTransition,
   startProjectPageBackgroundTransition,
   type ColumnHidePlan,
 } from '@/app/lib/projectTransition';
@@ -35,7 +35,6 @@ type HomeExperienceProps = {
 const OPENING_DISPLAY_MS = 2000;
 const OPENING_FADE_MS = 500;
 const PROJECT_REVEAL_INTERVAL_MS = 80;
-const PROJECT_HIDE_INTERVAL_MS = 80;
 
 type ActiveTransition = {
   slug: string;
@@ -51,26 +50,30 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
   const siteInfoRevealTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const navigateTimerRef = useRef<number | null>(null);
-  const transitionRef = useRef<ActiveTransition | null>(null);
   const transitionStartRef = useRef<number>(0);
   const { layoutMode, isMobile, information, setTransitionHidden } = useSiteInfo();
+  const fontsReady = useFontsReady();
   const hasOpening = Boolean(openingImage);
+  const [fromHomeTransition, setFromHomeTransition] = useState(false);
   const [openingVisible, setOpeningVisible] = useState(hasOpening);
   const [openingFading, setOpeningFading] = useState(false);
+  const [openingDisplayElapsed, setOpeningDisplayElapsed] = useState(!hasOpening);
   const [openingRevealPlan, setOpeningRevealPlan] = useState<ColumnHidePlan | null>(null);
   const [openingRevealStep, setOpeningRevealStep] = useState(0);
   const [openingRevealComplete, setOpeningRevealComplete] = useState(!hasOpening);
   const [activeTransition, setActiveTransition] = useState<ActiveTransition | null>(null);
-  const [transitionHideStep, setTransitionHideStep] = useState(0);
   const [siteInfoRevealStep, setSiteInfoRevealStep] = useState(0);
   const [siteInfoRevealComplete, setSiteInfoRevealComplete] = useState(!hasOpening);
 
   const isTransitioning = activeTransition !== null;
+  const playHomeReveal = hasOpening || fromHomeTransition;
   const siteInfoSectionCount = useMemo(
     () => (isMobile ? getSiteInfoInlineSectionCount(information) : 0),
     [information, isMobile],
   );
-  const isOpeningReveal = hasOpening && !openingVisible && !openingRevealComplete && !isTransitioning;
+  const hideMain = !fontsReady || (hasOpening && openingVisible && !fromHomeTransition);
+  const isOpeningReveal =
+    playHomeReveal && !openingVisible && !openingRevealComplete && !isTransitioning && fontsReady;
   const openingRevealedIndices = useMemo(
     () =>
       openingRevealPlan
@@ -82,20 +85,6 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
   const handleOpeningRevealPlanReady = useCallback((plan: ColumnHidePlan) => {
     setOpeningRevealPlan((currentPlan) => currentPlan ?? plan);
   }, []);
-
-  const transitionHiddenIndices = new Set(
-    activeTransition
-      ? flattenHideSteps(
-          activeTransition.hideSteps,
-          getProjectHideStepForCombinedStep(transitionHideStep, siteInfoSectionCount),
-        )
-      : [],
-  );
-
-  const siteInfoStaggerHiddenIndices =
-    isMobile && isTransitioning && transitionHideStep > 0
-      ? getSiteInfoTransitionHiddenIndices(siteInfoSectionCount, transitionHideStep)
-      : null;
 
   const siteInfoStaggerRevealedIndices = useMemo(() => {
     if (!isMobile || isTransitioning) {
@@ -122,13 +111,58 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
     siteInfoSectionCount,
   ]);
 
+  useLayoutEffect(() => {
+    if (!isHomeBackgroundTransitionActive()) {
+      return;
+    }
+
+    setFromHomeTransition(true);
+    setOpeningVisible(false);
+    setOpeningFading(false);
+    setOpeningDisplayElapsed(true);
+    setOpeningRevealPlan(null);
+    setOpeningRevealStep(0);
+    setOpeningRevealComplete(false);
+    setSiteInfoRevealStep(0);
+    setSiteInfoRevealComplete(false);
+    setActiveTransition(null);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!fromHomeTransition) {
+      return;
+    }
+
+    if (!fontsReady) {
+      return;
+    }
+
+    if (!openingRevealComplete && openingRevealStep < 1) {
+      return;
+    }
+
+    clearHomeBackgroundTransition();
+    setTransitionHidden(false);
+  }, [
+    fontsReady,
+    fromHomeTransition,
+    openingRevealComplete,
+    openingRevealStep,
+    setTransitionHidden,
+  ]);
+
   useEffect(() => {
-    setTransitionHidden(transitionHideStep > 0);
+    if (fromHomeTransition) {
+      setTransitionHidden(true);
+      return;
+    }
+
+    setTransitionHidden(isTransitioning);
 
     return () => {
       setTransitionHidden(false);
     };
-  }, [setTransitionHidden, transitionHideStep]);
+  }, [fromHomeTransition, isTransitioning, setTransitionHidden]);
 
   const clearSiteInfoRevealTimer = () => {
     if (siteInfoRevealTimerRef.current !== null) {
@@ -159,23 +193,40 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
   };
 
   useEffect(() => {
-    if (!openingImage) {
+    if (!openingImage || fromHomeTransition) {
       return;
     }
 
-    const fadeTimer = window.setTimeout(() => {
-      setOpeningFading(true);
+    const displayTimer = window.setTimeout(() => {
+      setOpeningDisplayElapsed(true);
     }, OPENING_DISPLAY_MS);
+
+    return () => {
+      window.clearTimeout(displayTimer);
+    };
+  }, [fromHomeTransition, openingImage]);
+
+  useEffect(() => {
+    if (!openingImage || fromHomeTransition || !openingDisplayElapsed || !fontsReady || openingFading) {
+      return;
+    }
+
+    setOpeningFading(true);
+  }, [fontsReady, fromHomeTransition, openingDisplayElapsed, openingFading, openingImage]);
+
+  useEffect(() => {
+    if (!openingFading || fromHomeTransition) {
+      return;
+    }
 
     const hideTimer = window.setTimeout(() => {
       setOpeningVisible(false);
-    }, OPENING_DISPLAY_MS + OPENING_FADE_MS);
+    }, OPENING_FADE_MS);
 
     return () => {
-      window.clearTimeout(fadeTimer);
       window.clearTimeout(hideTimer);
     };
-  }, [openingImage]);
+  }, [openingFading, fromHomeTransition]);
 
   useLayoutEffect(() => {
     if (!openingRevealPlan || !isOpeningReveal) {
@@ -230,7 +281,7 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
   }, [openingRevealPlan, isOpeningReveal]);
 
   useEffect(() => {
-    if (!isMobile || isTransitioning) {
+    if (!fontsReady || !isMobile || isTransitioning) {
       return;
     }
 
@@ -262,6 +313,7 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
       clearSiteInfoRevealTimer();
     };
   }, [
+    fontsReady,
     isMobile,
     isTransitioning,
     openingRevealComplete,
@@ -278,9 +330,9 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
 
   const handleProjectNavigate = (
     project: ProjectListItem,
-    index: number,
-    layout: RandomImageLayout,
-    hidePlan: { hideSteps: number[][]; columns: number[][] },
+    _index: number,
+    _layout: RandomImageLayout,
+    _hidePlan: { hideSteps: number[][]; columns: number[][] },
   ) => {
     const slug = project.slug;
 
@@ -293,78 +345,20 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
       revealTimerRef.current = null;
     }
 
-    saveProjectTransition({
-      slug,
-      projectId: project._id,
-      projectIndex: index,
-      layout,
-      category: project.category,
-      title: project.title,
-      client: project.client,
-      imageCount: project.imageCount,
-    });
-
     router.prefetch(`/projects/${slug}`);
-
-    const { hideSteps, columns } = hidePlan;
-    const transition: ActiveTransition = {
-      slug,
-      projectIndex: index,
-      layout,
-      hideSteps,
-      columns,
-    };
-
-    transitionRef.current = transition;
     transitionStartRef.current = performance.now();
     startProjectPageBackgroundTransition();
     dispatchProjectTransitionStart();
-    setActiveTransition(transition);
+    setActiveTransition({
+      slug,
+      projectIndex: _index,
+      layout: _layout,
+      hideSteps: [],
+      columns: [],
+    });
     clearTransitionTimers();
     clearSiteInfoRevealTimer();
-    setTransitionHideStep(0);
-
-    const mobileSiteInfoSectionCount = isMobile ? getSiteInfoInlineSectionCount(information) : 0;
-    const totalHideSteps = mobileSiteInfoSectionCount + hideSteps.length;
-
-    if (totalHideSteps === 0) {
-      scheduleNavigation(slug);
-      return;
-    }
-
-    const startHideSequence = () => {
-      setTransitionHideStep(1);
-
-      if (totalHideSteps === 1) {
-        scheduleNavigation(slug);
-        return;
-      }
-
-      hideTimerRef.current = window.setInterval(() => {
-        setTransitionHideStep((currentStep) => {
-          const nextStep = currentStep + 1;
-          const steps =
-            (transitionRef.current?.hideSteps.length ?? 0) + mobileSiteInfoSectionCount;
-
-          if (nextStep >= steps) {
-            if (hideTimerRef.current !== null) {
-              window.clearInterval(hideTimerRef.current);
-              hideTimerRef.current = null;
-            }
-
-            if (transitionRef.current) {
-              scheduleNavigation(transitionRef.current.slug);
-            }
-          }
-
-          return nextStep;
-        });
-      }, PROJECT_HIDE_INTERVAL_MS);
-    };
-
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(startHideSequence);
-    });
+    scheduleNavigation(slug);
   };
 
   return (
@@ -373,7 +367,7 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
         <OpeningScreen image={openingImage} fading={openingFading} />
       ) : null}
       <main
-        className={`home-layout home-layout--${layoutMode} ${isMobile ? 'home-layout--mobile py-5 px-0' : 'p-5'} ${isTransitioning ? 'home-layout--transitioning' : ''} relative z-10 min-h-screen bg-black ${hasOpening && openingVisible ? 'invisible' : ''}`}
+        className={`home-layout home-layout--${layoutMode} ${isMobile ? 'home-layout--mobile py-5 px-0' : 'p-5'} ${isTransitioning ? 'home-layout--transitioning' : ''} relative z-10 min-h-screen bg-black ${hideMain ? 'invisible' : ''}`}
       >
         <div className="home-layout__projects">
           <ProjectList
@@ -383,9 +377,10 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
             openingRevealedIndices={openingRevealedIndices}
             onOpeningRevealPlanReady={handleOpeningRevealPlanReady}
             isTransitioning={isTransitioning}
-            transitionHiddenIndices={transitionHiddenIndices}
-            transitionColumns={activeTransition?.columns ?? null}
-            transitionTargetIndex={activeTransition?.projectIndex ?? null}
+            dismissHoverImages={isTransitioning}
+            transitionHiddenIndices={undefined}
+            transitionColumns={null}
+            transitionTargetIndex={null}
             onProjectNavigate={handleProjectNavigate}
             isMobile={isMobile}
           />
@@ -395,7 +390,7 @@ export function HomeExperience({ openingImage, projects }: HomeExperienceProps) 
               isMobile
               placement="inline"
               staggerRevealedIndices={siteInfoStaggerRevealedIndices}
-              staggerHiddenIndices={siteInfoStaggerHiddenIndices}
+              staggerHiddenIndices={null}
             />
           ) : null}
         </div>

@@ -3,9 +3,11 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { ProjectList, type ProjectListItem } from '@/app/components/ProjectList';
+import { ProjectImageSlider } from '@/app/components/ProjectImageSlider';
+import { ProjectList, type ProjectListItem, PROJECT_HOVER_FADE_OUT_MS } from '@/app/components/ProjectList';
 import { ProjectPageImage } from '@/app/components/ProjectPageImage';
 import { SiteInfo } from '@/app/components/SiteInfo';
+import { useFontsReady } from '@/app/components/FontReadyProvider';
 import { useSiteInfo } from '@/app/components/SiteInfoProvider';
 import { formatProjectMeta } from '@/app/lib/formatProjectMeta';
 import {
@@ -20,12 +22,10 @@ import {
   dispatchProjectTransitionStart,
   flattenHideSteps,
   getProjectHideStepForCombinedStep,
-  getProjectTransitionRemainingMs,
   getSiteInfoTransitionHiddenIndices,
   PROJECT_TRANSITION_BG_FADE_MS,
-  readProjectTransition,
-  saveProjectTransition,
   setProjectPageBackground,
+  startHomeBackgroundTransition,
   startProjectPageBackgroundTransition,
   type ColumnHidePlan,
 } from '@/app/lib/projectTransition';
@@ -57,7 +57,6 @@ const PROJECT_PAGE_MOUNT_STAGGER_MS = 50;
 const SCROLL_BOTTOM_THRESHOLD_PX = 1;
 const LIST_REVEAL_INTERVAL_MS = 80;
 const LIST_HIDE_INTERVAL_MS = 80;
-const PROJECT_NAVIGATE_HIDE_INTERVAL_MS = 80;
 const SCROLL_TO_TOP_MS = 1200;
 
 type ActiveTransition = {
@@ -88,17 +87,21 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   const transitionStartRef = useRef<number>(0);
   const transitionHideTimerRef = useRef<number | null>(null);
   const navigateTimerRef = useRef<number | null>(null);
-  const handoffCompletedRef = useRef(false);
-  const [fromTransition, setFromTransition] =
-    useState<ReturnType<typeof readProjectTransition>>(null);
+  const homeNavigateTimerRef = useRef<number | null>(null);
+  const isHomeNavigatingRef = useRef(false);
   const [layouts, setLayouts] = useState<ReturnType<typeof buildProjectPageImageLayouts> | null>(
     null,
   );
   const [canvasHeight, setCanvasHeight] = useState<number | null>(null);
-  const [imageHandoffFixed, setImageHandoffFixed] = useState(false);
-  const [secondaryMounting, setSecondaryMounting] = useState(true);
+  const [metaEntering, setMetaEntering] = useState(true);
+  const [sliderIndex, setSliderIndex] = useState<number | null>(null);
+  const sliderOpenRef = useRef(false);
+  const sliderCloseRef = useRef<(() => void) | null>(null);
+  const [mobileFocusedImageIndex, setMobileFocusedImageIndex] = useState(0);
+  const mobileScrollFocusRafRef = useRef<number | null>(null);
   const [listOverlayActive, setListOverlayActive] = useState(false);
-  const [listOverlayFading, setListOverlayFading] = useState(false);
+  const [overlayBlack, setOverlayBlack] = useState(false);
+  const [overlayFadeMs, setOverlayFadeMs] = useState(PROJECT_TRANSITION_BG_FADE_MS);
   const [listRevealPlan, setListRevealPlan] = useState<ColumnHidePlan | null>(null);
   const [listRevealStep, setListRevealStep] = useState(0);
   const [listRevealComplete, setListRevealComplete] = useState(false);
@@ -109,7 +112,8 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   const [transitionHideStep, setTransitionHideStep] = useState(0);
   const [siteInfoRevealStep, setSiteInfoRevealStep] = useState(0);
   const [siteInfoRevealComplete, setSiteInfoRevealComplete] = useState(false);
-  const { layoutMode, isMobile, information } = useSiteInfo();
+  const { layoutMode, isMobile, information, setTransitionHidden } = useSiteInfo();
+  const fontsReady = useFontsReady();
 
   const siteInfoSectionCount = useMemo(
     () => (isMobile ? getSiteInfoInlineSectionCount(information) : 0),
@@ -137,8 +141,15 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
   const isListHideComplete =
     listHiding && listHidePlan !== null && listHideStep >= totalListHideSteps;
   const isProjectNavigating = activeTransition !== null;
-  const showProjectMeta = !listOverlayActive || isListHideComplete;
-  const projectMetaClassName = `project-page__meta${showProjectMeta ? '' : ' project-page__meta--hidden'}`;
+  const listOverlayPointerActive = listOverlayActive && !listHiding && !isProjectNavigating;
+  const listMenuOwnsTitleSlot =
+    listOverlayActive &&
+    !isListHideComplete &&
+    (listHiding || isProjectNavigating || listRevealComplete || listRevealStep > 0);
+  const showProjectMeta = fontsReady && !listMenuOwnsTitleSlot;
+  const projectMetaClassName = `project-page__meta${showProjectMeta ? '' : ' project-page__meta--hidden'}${
+    metaEntering && showProjectMeta ? ' project-page__meta--entering' : ''
+  }${sliderIndex !== null ? ' project-page__meta--above-slider' : ''}`;
   const transitionHiddenIndices = useMemo(
     () =>
       activeTransition
@@ -241,21 +252,9 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     setSiteInfoRevealComplete(false);
   }, [clearListHideTimer, clearListRevealTimer, clearSiteInfoRevealTimer]);
 
-  const clearBackgroundFadeDuration = useCallback(() => {
-    if (typeof document === 'undefined') {
-      return;
-    }
-
-    document.documentElement.style.removeProperty('--project-bg-fade-ms');
-  }, []);
-
-  const beginBackgroundFadeToWhite = useCallback((durationMs: number) => {
-    if (typeof document === 'undefined') {
-      return;
-    }
-
-    document.documentElement.style.setProperty('--project-bg-fade-ms', `${durationMs}ms`);
-    setListOverlayFading(false);
+  const setOverlayBackground = useCallback((black: boolean, durationMs = PROJECT_TRANSITION_BG_FADE_MS) => {
+    setOverlayFadeMs(durationMs);
+    setOverlayBlack(black);
   }, []);
 
   const finishCloseListOverlay = useCallback(() => {
@@ -269,10 +268,9 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     }
 
     setListOverlayActive(false);
-    setListOverlayFading(false);
+    setOverlayBlack(false);
     resetListReveal();
-    clearBackgroundFadeDuration();
-  }, [clearBackgroundFadeDuration, clearListHideTimer, resetListReveal]);
+  }, [clearListHideTimer, resetListReveal]);
 
   const scheduleFinishClose = useCallback(
     (totalHideSteps: number) => {
@@ -282,7 +280,10 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
       const hideDuration =
         totalHideSteps <= 1 ? 0 : (totalHideSteps - 1) * LIST_HIDE_INTERVAL_MS;
-      const totalCloseMs = Math.max(hideDuration, PROJECT_TRANSITION_BG_FADE_MS);
+      const totalCloseMs = Math.max(
+        hideDuration + PROJECT_HOVER_FADE_OUT_MS,
+        PROJECT_TRANSITION_BG_FADE_MS,
+      );
 
       overlayCloseTimerRef.current = window.setTimeout(() => {
         finishCloseListOverlay();
@@ -305,14 +306,8 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     isListClosingRef.current = false;
     resetListReveal();
     setListOverlayActive(true);
-    setListOverlayFading(false);
-
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        setListOverlayFading(true);
-      });
-    });
-  }, [resetListReveal]);
+    setOverlayBackground(true);
+  }, [resetListReveal, setOverlayBackground]);
 
   const startCloseListOverlay = useCallback(
     (options?: { skipBackgroundFade?: boolean }) => {
@@ -325,7 +320,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       setListHiding(true);
 
       if (!options?.skipBackgroundFade) {
-        beginBackgroundFadeToWhite(PROJECT_TRANSITION_BG_FADE_MS);
+        setOverlayBackground(false);
       }
 
       const listItems = layoutRef.current?.querySelectorAll<HTMLElement>('.project-item');
@@ -366,7 +361,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       });
     },
     [
-      beginBackgroundFadeToWhite,
+      setOverlayBackground,
       clearListHideTimer,
       clearListRevealTimer,
       information,
@@ -423,6 +418,47 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     [cancelScrollToTop],
   );
 
+  const navigateHome = useCallback(() => {
+    if (isHomeNavigatingRef.current || isProjectNavigating || listHiding) {
+      return;
+    }
+
+    isHomeNavigatingRef.current = true;
+    sliderOpenRef.current = false;
+    setSliderIndex(null);
+    setTransitionHidden(true);
+    router.prefetch('/');
+    startHomeBackgroundTransition();
+
+    homeNavigateTimerRef.current = window.setTimeout(() => {
+      router.push('/');
+    }, PROJECT_TRANSITION_BG_FADE_MS);
+  }, [isProjectNavigating, listHiding, router, setTransitionHidden]);
+
+  const handleTitleClick = useCallback(() => {
+    if (listOverlayRef.current) {
+      return;
+    }
+
+    navigateHome();
+  }, [navigateHome]);
+
+  const handleMobileCloseClick = useCallback(() => {
+    if (sliderIndex !== null) {
+      sliderCloseRef.current?.();
+      return;
+    }
+
+    if (listOverlayRef.current) {
+      if (!isListClosingRef.current) {
+        startCloseListOverlay();
+      }
+      return;
+    }
+
+    navigateHome();
+  }, [navigateHome, sliderIndex, startCloseListOverlay]);
+
   const handleCurrentProjectClick = useCallback(() => {
     if (!listOverlayRef.current || isProjectNavigating) {
       return;
@@ -432,14 +468,14 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     const fadeMs =
       page && page.scrollTop > 0 ? SCROLL_TO_TOP_MS : PROJECT_TRANSITION_BG_FADE_MS;
 
-    beginBackgroundFadeToWhite(fadeMs);
+    setOverlayBackground(false, fadeMs);
     scrollPageToTop();
 
     if (!isListClosingRef.current) {
       startCloseListOverlay({ skipBackgroundFade: true });
     }
   }, [
-    beginBackgroundFadeToWhite,
+    setOverlayBackground,
     isProjectNavigating,
     scrollPageToTop,
     startCloseListOverlay,
@@ -484,154 +520,140 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
       clearListRevealTimer();
       clearProjectNavigateTimers();
-
-      saveProjectTransition({
-        slug,
-        projectId: targetProject._id,
-        projectIndex: index,
-        layout,
-        category: targetProject.category,
-        title: targetProject.title,
-        client: targetProject.client,
-        imageCount: targetProject.imageCount,
-      });
-
       router.prefetch(`/projects/${slug}`);
 
-      const { hideSteps, columns } = hidePlan;
       const transition: ActiveTransition = {
         slug,
         projectIndex: index,
         layout,
-        hideSteps,
-        columns,
+        hideSteps: [],
+        columns: hidePlan.columns,
       };
 
       transitionRef.current = transition;
       transitionStartRef.current = performance.now();
       startProjectPageBackgroundTransition();
       dispatchProjectTransitionStart();
-      setListOverlayFading(false);
       setActiveTransition(transition);
+      setTransitionHidden(true);
       setTransitionHideStep(0);
       clearSiteInfoRevealTimer();
       setSiteInfoRevealStep(0);
       setSiteInfoRevealComplete(false);
-
-      const mobileSiteInfoSectionCount = isMobile ? getSiteInfoInlineSectionCount(information) : 0;
-      const totalHideSteps = mobileSiteInfoSectionCount + hideSteps.length;
-
-      if (totalHideSteps === 0) {
-        scheduleProjectNavigation(slug);
-        return;
-      }
-
-      const startHideSequence = () => {
-        setTransitionHideStep(1);
-
-        if (totalHideSteps === 1) {
-          scheduleProjectNavigation(slug);
-          return;
-        }
-
-        transitionHideTimerRef.current = window.setInterval(() => {
-          setTransitionHideStep((currentStep) => {
-            const nextStep = currentStep + 1;
-            const steps =
-              (transitionRef.current?.hideSteps.length ?? 0) + mobileSiteInfoSectionCount;
-
-            if (nextStep >= steps) {
-              if (transitionHideTimerRef.current !== null) {
-                window.clearInterval(transitionHideTimerRef.current);
-                transitionHideTimerRef.current = null;
-              }
-
-              if (transitionRef.current) {
-                scheduleProjectNavigation(transitionRef.current.slug);
-              }
-            }
-
-            return nextStep;
-          });
-        }, PROJECT_NAVIGATE_HIDE_INTERVAL_MS);
-      };
-
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(startHideSequence);
-      });
+      scheduleProjectNavigation(slug);
     },
     [
       clearListRevealTimer,
       clearProjectNavigateTimers,
       clearSiteInfoRevealTimer,
-      information,
-      isMobile,
       isProjectNavigating,
       listHiding,
       router,
       scheduleProjectNavigation,
+      setTransitionHidden,
     ],
   );
 
   useLayoutEffect(() => {
-    if (typeof document === 'undefined') {
-      return;
-    }
+    const nextLayouts = buildProjectPageImageLayouts(project.images);
 
-    const className = 'body--project-page-list-black';
-
-    if (listOverlayFading) {
-      document.documentElement.classList.add(className);
-      document.body.classList.add(className);
-    } else {
-      document.documentElement.classList.remove(className);
-      document.body.classList.remove(className);
-    }
-
-    return () => {
-      document.documentElement.classList.remove(className);
-      document.body.classList.remove(className);
-    };
-  }, [listOverlayFading]);
-
-  const handleHeroImageReady = useCallback(() => {
-    if (!fromTransition || handoffCompletedRef.current) {
-      return;
-    }
-
-    handoffCompletedRef.current = true;
-    pageRef.current?.scrollTo(0, 0);
-
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        clearProjectTransition();
-        dispatchProjectTransitionEnd();
-        setImageHandoffFixed(false);
-        setProjectPageBackground(true);
-      });
-    });
-  }, [fromTransition]);
-
-  useLayoutEffect(() => {
-    handoffCompletedRef.current = false;
-    const transition = readProjectTransition(project.slug);
-    const nextLayouts = buildProjectPageImageLayouts(project.images, transition?.layout ?? null);
-
-    setFromTransition(transition);
     setLayouts(nextLayouts);
     setCanvasHeight(getProjectPageCanvasHeight(nextLayouts));
-    setImageHandoffFixed(Boolean(transition));
-    setSecondaryMounting(!transition);
+    setMetaEntering(true);
+    setSliderIndex(null);
+    sliderOpenRef.current = false;
+    setMobileFocusedImageIndex(0);
+    setTransitionHidden(false);
     pageRef.current?.scrollTo(0, 0);
-  }, [project.slug, project.images]);
+    clearProjectTransition();
+    dispatchProjectTransitionEnd();
+    setProjectPageBackground(true);
+  }, [project.slug, project.images, setTransitionHidden]);
 
-  useLayoutEffect(() => {
-    if (!fromTransition || !layouts || secondaryMounting) {
+  const updateMobileScrollFocusedImage = useCallback(() => {
+    const page = pageRef.current;
+
+    if (!page || sliderOpenRef.current) {
       return;
     }
 
-    setSecondaryMounting(true);
-  }, [fromTransition, layouts, secondaryMounting]);
+    const viewportCenterY = window.innerHeight / 2;
+    const wraps = page.querySelectorAll('.project-page-image-wrap');
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+
+    wraps.forEach((wrap, index) => {
+      const rect = wrap.getBoundingClientRect();
+      const centerY = rect.top + rect.height / 2;
+      const distance = Math.abs(centerY - viewportCenterY);
+
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+
+    setMobileFocusedImageIndex((current) => (current === bestIndex ? current : bestIndex));
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile || !layouts?.length) {
+      return;
+    }
+
+    const page = pageRef.current;
+
+    if (!page) {
+      return;
+    }
+
+    const scheduleUpdate = () => {
+      if (mobileScrollFocusRafRef.current !== null) {
+        return;
+      }
+
+      mobileScrollFocusRafRef.current = window.requestAnimationFrame(() => {
+        mobileScrollFocusRafRef.current = null;
+        updateMobileScrollFocusedImage();
+      });
+    };
+
+    scheduleUpdate();
+    page.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('resize', scheduleUpdate);
+
+    return () => {
+      page.removeEventListener('scroll', scheduleUpdate);
+      window.removeEventListener('resize', scheduleUpdate);
+
+      if (mobileScrollFocusRafRef.current !== null) {
+        window.cancelAnimationFrame(mobileScrollFocusRafRef.current);
+        mobileScrollFocusRafRef.current = null;
+      }
+    };
+  }, [isMobile, layouts, updateMobileScrollFocusedImage]);
+
+  useEffect(() => {
+    if (!isMobile || sliderIndex !== null) {
+      return;
+    }
+
+    updateMobileScrollFocusedImage();
+  }, [isMobile, sliderIndex, updateMobileScrollFocusedImage]);
+
+  useEffect(() => {
+    if (!fontsReady || !showProjectMeta || !metaEntering) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setMetaEntering(false);
+    }, PROJECT_PAGE_MOUNT_FADE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [fontsReady, metaEntering, showProjectMeta]);
 
   useLayoutEffect(() => {
     if (!listRevealPlan || !isListRevealActive) {
@@ -772,6 +794,11 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
     let lastTouchY = 0;
 
     const handleWheel = (event: WheelEvent) => {
+      if (sliderOpenRef.current) {
+        event.preventDefault();
+        return;
+      }
+
       if (listOverlayRef.current) {
         if (handleOverlayScrollUp(event.deltaY)) {
           event.preventDefault();
@@ -779,7 +806,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
         return;
       }
 
-      if (event.deltaY <= 0 || !isAtBottom()) {
+      if (isMobile || event.deltaY <= 0 || !isAtBottom()) {
         return;
       }
 
@@ -796,6 +823,11 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       const deltaY = lastTouchY - currentY;
       lastTouchY = currentY;
 
+      if (sliderOpenRef.current) {
+        event.preventDefault();
+        return;
+      }
+
       if (listOverlayRef.current) {
         if (deltaY >= 0) {
           return;
@@ -806,7 +838,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
         return;
       }
 
-      if (deltaY <= 0 || !isAtBottom()) {
+      if (isMobile || deltaY <= 0 || !isAtBottom()) {
         return;
       }
 
@@ -823,7 +855,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       page.removeEventListener('touchstart', handleTouchStart);
       page.removeEventListener('touchmove', handleTouchMove);
     };
-  }, [handleOverlayScrollUp, isAtBottom, openListOverlay]);
+  }, [handleOverlayScrollUp, isAtBottom, isMobile, openListOverlay]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -870,69 +902,103 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
 
   useEffect(() => {
     return () => {
-      clearListRevealTimer();
-      clearListHideTimer();
-      clearSiteInfoRevealTimer();
-      clearProjectNavigateTimers();
-      cancelScrollToTop();
-      clearBackgroundFadeDuration();
+      if (revealTimerRef.current !== null) {
+        window.clearInterval(revealTimerRef.current);
+      }
+
+      if (hideTimerRef.current !== null) {
+        window.clearInterval(hideTimerRef.current);
+      }
+
+      if (siteInfoRevealTimerRef.current !== null) {
+        window.clearInterval(siteInfoRevealTimerRef.current);
+      }
+
+      if (transitionHideTimerRef.current !== null) {
+        window.clearInterval(transitionHideTimerRef.current);
+      }
+
+      if (navigateTimerRef.current !== null) {
+        window.clearTimeout(navigateTimerRef.current);
+      }
+
+      if (homeNavigateTimerRef.current !== null) {
+        window.clearTimeout(homeNavigateTimerRef.current);
+      }
 
       if (overlayCloseTimerRef.current !== null) {
         window.clearTimeout(overlayCloseTimerRef.current);
       }
+
+      if (scrollToTopFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollToTopFrameRef.current);
+      }
     };
-  }, [
-    cancelScrollToTop,
-    clearBackgroundFadeDuration,
-    clearListHideTimer,
-    clearListRevealTimer,
-    clearProjectNavigateTimers,
-    clearSiteInfoRevealTimer,
-  ]);
+  }, []);
 
   return (
-    <main
-      ref={pageRef}
-      className={`project-page${listOverlayActive ? ' project-page--list-overlay-active' : ''}${listOverlayFading ? ' project-page--list-overlay-visible' : ''}${listHiding ? ' project-page--list-overlay-closing' : ''}${isProjectNavigating ? ' project-page--navigating' : ''}`}
-    >
-      <div className="project-page__canvas" style={{ height: `${canvasHeight ?? 0}px` }}>
-          <header className={projectMetaClassName}>
-            <span className="project-page__indicator text-secondary">
-              {formatProjectMeta(project.category, project.images.length)}
-            </span>
-            <span className="project-page__title text-primary">
-              {project.title} — {project.client}
-            </span>
-          </header>
-          {layouts?.map((layout, index) => {
-            if (fromTransition && index > 0 && !secondaryMounting) {
-              return null;
-            }
-
-            return (
+    <>
+      {isMobile && fontsReady ? (
+        <button
+          type="button"
+          className={`project-page__mobile-close text-secondary${
+            sliderIndex !== null ? ' project-page__mobile-close--above-slider' : ''
+          }`}
+          onClick={handleMobileCloseClick}
+        >
+          CLOSE
+        </button>
+      ) : null}
+      <header className={projectMetaClassName} onClick={handleTitleClick}>
+        <span className="project-page__indicator text-secondary">
+          <span className="project-page__indicator-sizer" aria-hidden>
+            {formatProjectMeta(project.category, project.images.length)}
+          </span>
+          <span className="project-page__indicator-value">
+            {formatProjectMeta(
+              project.category,
+              project.images.length,
+              sliderIndex === null ? undefined : sliderIndex,
+            )}
+          </span>
+        </span>
+        <span className="project-page__title text-primary">
+          {project.title} — {project.client}
+        </span>
+      </header>
+      <div
+        className={`project-page__scrim${overlayBlack ? ' project-page__scrim--on' : ''}`}
+        style={{ transitionDuration: `${overlayFadeMs}ms` }}
+        aria-hidden
+      />
+      <main
+        ref={pageRef}
+        className={`project-page${listOverlayActive ? ' project-page--list-overlay-active' : ''}${listHiding ? ' project-page--list-overlay-closing' : ''}${isProjectNavigating ? ' project-page--navigating' : ''}`}
+      >
+        <div className="project-page__canvas" style={{ height: `${canvasHeight ?? 0}px` }}>
+          {layouts?.map((layout, index) => (
               <ProjectPageImage
                 key={layout.image.url}
                 layout={layout}
                 caption={String(index + 1).padStart(2, '0')}
-                skipMountFade={Boolean(fromTransition && index === 0)}
-                opacityRiseFromHome={Boolean(fromTransition && index === 0)}
-                opacityRiseMs={
-                  fromTransition && index === 0
-                    ? getProjectTransitionRemainingMs(fromTransition.startedAt)
-                    : undefined
-                }
-                positionFixed={Boolean(fromTransition && index === 0 && imageHandoffFixed)}
-                mountDelayMs={index > 0 ? (index - 1) * PROJECT_PAGE_MOUNT_STAGGER_MS : 0}
+                mountDelayMs={index * PROJECT_PAGE_MOUNT_STAGGER_MS}
                 mountFadeMs={PROJECT_PAGE_MOUNT_FADE_MS}
-                onReady={fromTransition && index === 0 ? handleHeroImageReady : undefined}
+                scrollFocused={isMobile && mobileFocusedImageIndex === index}
+                onOpen={() => {
+                  if (listOverlayRef.current || isProjectNavigating) {
+                    return;
+                  }
+
+                  sliderOpenRef.current = true;
+                  setSliderIndex(index);
+                }}
               />
-            );
-          })}
+          ))}
         </div>
       {listOverlayActive ? (
         <div
           ref={overlayRef}
-          className={`project-page__list-overlay${listOverlayFading ? ' project-page__list-overlay--visible' : ''}${listHiding ? ' project-page__list-overlay--closing' : ''}`}
+          className={`project-page__list-overlay${listOverlayPointerActive ? ' project-page__list-overlay--visible' : ''}${listHiding ? ' project-page__list-overlay--closing' : ''}`}
         >
           <div
             ref={layoutRef}
@@ -945,6 +1011,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
               openingRevealedIndices={listRevealedIndices}
               onOpeningRevealPlanReady={handleListRevealPlanReady}
               isTransitioning={listHiding || isProjectNavigating}
+              dismissHoverImages={isProjectNavigating || isListHideComplete}
               transitionHiddenIndices={transitionHiddenIndices}
               transitionColumns={
                 activeTransition?.columns ?? listHidePlan?.columns ?? listRevealPlan?.columns ?? null
@@ -967,6 +1034,22 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
           </div>
         </div>
       ) : null}
-    </main>
+      </main>
+      {sliderIndex !== null ? (
+        <ProjectImageSlider
+          images={project.images}
+          startIndex={sliderIndex}
+          onIndexChange={setSliderIndex}
+          onCloseReady={(close) => {
+            sliderCloseRef.current = close;
+          }}
+          onClose={() => {
+            sliderOpenRef.current = false;
+            setSliderIndex(null);
+            sliderCloseRef.current = null;
+          }}
+        />
+      ) : null}
+    </>
   );
 }

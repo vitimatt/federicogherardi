@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import type { RandomImageLayout } from '@/app/lib/imageLayoutCore';
+import { isMobileViewport, type RandomImageLayout } from '@/app/lib/imageLayoutCore';
 
 type ProjectPageImageProps = {
   layout: RandomImageLayout;
@@ -14,6 +14,8 @@ type ProjectPageImageProps = {
   mountFadeMs?: number;
   positionFixed?: boolean;
   onReady?: () => void;
+  onOpen?: () => void;
+  scrollFocused?: boolean;
 };
 
 export function ProjectPageImage({
@@ -26,6 +28,8 @@ export function ProjectPageImage({
   mountFadeMs = 400,
   positionFixed = false,
   onReady,
+  onOpen,
+  scrollFocused = false,
 }: ProjectPageImageProps) {
   const { image, isLandscape, top, left, boxWidth, boxHeight, renderWidth, renderHeight } = layout;
   const [mounting, setMounting] = useState(!skipMountFade && !opacityRiseFromHome);
@@ -103,13 +107,41 @@ export function ProjectPageImage({
   };
 
   const handleMouseEnter = () => {
+    if (isMobileViewport()) {
+      return;
+    }
+
     setExiting(false);
     setActive(true);
   };
 
   const handleMouseLeave = () => {
+    if (isMobileViewport()) {
+      return;
+    }
+
     setExiting(true);
   };
+
+  useEffect(() => {
+    if (!isMobileViewport()) {
+      return;
+    }
+
+    if (scrollFocused) {
+      setExiting(false);
+      setActive(true);
+      return;
+    }
+
+    setActive((current) => {
+      if (current) {
+        setExiting(true);
+      }
+
+      return current;
+    });
+  }, [scrollFocused]);
 
   const handleAnimationEnd = (event: React.AnimationEvent<HTMLElement>) => {
     if (event.currentTarget !== event.target) {
@@ -152,7 +184,7 @@ export function ProjectPageImage({
 
   return (
     <div
-      className={`project-page-image-wrap${positionFixed ? ' project-page-image-wrap--handoff-fixed' : ''}`}
+      className={`project-page-image-wrap${positionFixed ? ' project-page-image-wrap--handoff-fixed' : ''}${onOpen ? ' project-page-image-wrap--openable' : ''}${scrollFocused ? ' project-page-image-wrap--scroll-focused' : ''}`}
       style={{
         top: `${top}px`,
         left: `${left}px`,
@@ -167,6 +199,7 @@ export function ProjectPageImage({
           width: `${isLandscape ? boxWidth : renderWidth}px`,
           height: `${isLandscape ? boxHeight : renderHeight}px`,
         }}
+        onClick={onOpen}
       >
         <img
           src={image.url}
