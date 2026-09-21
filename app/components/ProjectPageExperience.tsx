@@ -1011,7 +1011,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
               openingRevealedIndices={listRevealedIndices}
               onOpeningRevealPlanReady={handleListRevealPlanReady}
               isTransitioning={listHiding || isProjectNavigating}
-              dismissHoverImages={isProjectNavigating || isListHideComplete}
+              isOverlayClosing={listHiding || isProjectNavigating || isListHideComplete}
               transitionHiddenIndices={transitionHiddenIndices}
               transitionColumns={
                 activeTransition?.columns ?? listHidePlan?.columns ?? listRevealPlan?.columns ?? null

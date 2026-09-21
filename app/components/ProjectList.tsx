@@ -43,6 +43,8 @@ function pickRandomImage(images: ProjectImage[]) {
   return images[Math.floor(Math.random() * images.length)] ?? null;
 }
 
+export const PROJECT_HOVER_FADE_OUT_MS = 400;
+
 const MAX_HOVER_IMAGES = 2;
 const HOVER_FADE_DELAY_MS = 2000;
 
