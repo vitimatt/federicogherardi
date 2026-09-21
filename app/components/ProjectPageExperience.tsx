@@ -919,7 +919,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
         return;
       }
 
-      if (event.deltaY <= 0 || !isAtBottom()) {
+      if (isMobile || event.deltaY <= 0 || !isAtBottom()) {
         return;
       }
 
@@ -951,7 +951,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
         return;
       }
 
-      if (deltaY <= 0 || !isAtBottom()) {
+      if (isMobile || deltaY <= 0 || !isAtBottom()) {
         return;
       }
 
@@ -968,7 +968,7 @@ export function ProjectPageExperience({ project, projects }: ProjectPageExperien
       page.removeEventListener('touchstart', handleTouchStart);
       page.removeEventListener('touchmove', handleTouchMove);
     };
-  }, [handleOverlayScrollUp, isAtBottom, openListOverlay]);
+  }, [handleOverlayScrollUp, isAtBottom, isMobile, openListOverlay]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
