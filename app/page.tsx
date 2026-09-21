@@ -1,6 +1,6 @@
 import { HomeExperience } from '@/app/components/HomeExperience';
 import type { ProjectListItem } from '@/app/components/ProjectList';
-import { mergeSiteProjects, SITE_PROJECTS_QUERY } from '@/app/lib/siteProjects';
+import { SITE_PROJECTS_QUERY } from '@/app/lib/siteProjects';
 import { SITE_INFORMATION_QUERY } from '@/app/lib/siteInformation';
 import { client } from '@/sanity/lib/client';
 
@@ -23,9 +23,7 @@ export default async function HomePage() {
     client.fetch<Project[]>(SITE_PROJECTS_QUERY, {}, { cache: 'no-store' }),
     client.fetch<Information>(SITE_INFORMATION_QUERY, {}, { cache: 'no-store' }),
   ]);
-  const allProjects = mergeSiteProjects(projects);
-
   return (
-    <HomeExperience openingImage={information?.openingImage} projects={allProjects} />
+    <HomeExperience openingImage={information?.openingImage} projects={projects} />
   );
 }

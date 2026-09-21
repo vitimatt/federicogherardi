@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import { ProjectPageExperience } from '@/app/components/ProjectPageExperience';
 import type { ProjectListItem } from '@/app/components/ProjectList';
 import { buildProjectMetadata } from '@/app/lib/siteSeo';
-import { mergeSiteProjects, SITE_PROJECTS_QUERY } from '@/app/lib/siteProjects';
+import { SITE_PROJECTS_QUERY } from '@/app/lib/siteProjects';
 import { client } from '@/sanity/lib/client';
 
 type ProjectImage = {
@@ -75,5 +75,5 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
     notFound();
   }
 
-  return <ProjectPageExperience project={project} projects={mergeSiteProjects(projects)} />;
+  return <ProjectPageExperience project={project} projects={projects} />;
 }
