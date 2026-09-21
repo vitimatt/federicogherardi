@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { isMobileViewport, type RandomImageLayout } from '@/app/lib/imageLayoutCore';
 
@@ -8,14 +8,13 @@ type ProjectPageImageProps = {
   layout: RandomImageLayout;
   caption: string;
   skipMountFade?: boolean;
-  mountEnabled?: boolean;
   opacityRiseFromHome?: boolean;
   opacityRiseMs?: number;
   mountDelayMs?: number;
   mountFadeMs?: number;
   positionFixed?: boolean;
   onReady?: () => void;
-  onImageClick?: () => void;
+  onOpen?: () => void;
   scrollFocused?: boolean;
 };
 
@@ -23,20 +22,17 @@ export function ProjectPageImage({
   layout,
   caption,
   skipMountFade = false,
-  mountEnabled = true,
   opacityRiseFromHome = false,
   opacityRiseMs = 1000,
   mountDelayMs = 0,
   mountFadeMs = 400,
   positionFixed = false,
   onReady,
-  onImageClick,
+  onOpen,
   scrollFocused = false,
 }: ProjectPageImageProps) {
   const { image, isLandscape, top, left, boxWidth, boxHeight, renderWidth, renderHeight } = layout;
-  const shouldMountFade = !skipMountFade && !opacityRiseFromHome;
-  const [mountStarted, setMountStarted] = useState(() => shouldMountFade && mountEnabled);
-  const [mounting, setMounting] = useState(mountStarted);
+  const [mounting, setMounting] = useState(!skipMountFade && !opacityRiseFromHome);
   const [opacityRiseActive, setOpacityRiseActive] = useState(false);
   const [active, setActive] = useState(false);
   const [exiting, setExiting] = useState(false);
@@ -44,45 +40,11 @@ export function ProjectPageImage({
   const imageLoadedRef = useRef(false);
   const opacityDoneRef = useRef(false);
 
-  const tryReportReady = useCallback(() => {
-    if (readyReportedRef.current) {
-      return;
-    }
-
-    if (!imageLoadedRef.current) {
-      return;
-    }
-
-    if (opacityRiseFromHome && !opacityDoneRef.current) {
-      return;
-    }
-
-    readyReportedRef.current = true;
-    onReady?.();
-  }, [onReady, opacityRiseFromHome]);
-
   useEffect(() => {
     readyReportedRef.current = false;
     imageLoadedRef.current = false;
     opacityDoneRef.current = false;
   }, [image.url]);
-
-  useEffect(() => {
-    if (!shouldMountFade || !mountEnabled || mountStarted) {
-      return;
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        setMountStarted(true);
-        setMounting(true);
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [mountEnabled, mountStarted, shouldMountFade]);
 
   useEffect(() => {
     if (!opacityRiseFromHome) {
@@ -111,7 +73,24 @@ export function ProjectPageImage({
       window.cancelAnimationFrame(frame);
       window.clearTimeout(fallback);
     };
-  }, [opacityRiseFromHome, opacityRiseMs, image.url, tryReportReady]);
+  }, [opacityRiseFromHome, opacityRiseMs, image.url]);
+
+  const tryReportReady = () => {
+    if (readyReportedRef.current) {
+      return;
+    }
+
+    if (!imageLoadedRef.current) {
+      return;
+    }
+
+    if (opacityRiseFromHome && !opacityDoneRef.current) {
+      return;
+    }
+
+    readyReportedRef.current = true;
+    onReady?.();
+  };
 
   const handleImageLoad = () => {
     imageLoadedRef.current = true;
@@ -169,26 +148,17 @@ export function ProjectPageImage({
       return;
     }
 
-    if (
-      event.animationName.endsWith('project-page-image-mount-in') ||
-      event.animationName.endsWith('project-page-image-caption-mount-in')
-    ) {
+    if (event.animationName.endsWith('project-page-image-mount-in')) {
       setMounting(false);
       return;
     }
 
-    if (
-      event.animationName.endsWith('project-page-image-hover-in') ||
-      event.animationName.endsWith('project-page-image-hover-out')
-    ) {
-      if (event.animationName.endsWith('project-page-image-hover-out')) {
-        setActive(false);
-        setExiting(false);
-      }
+    if (event.animationName.endsWith('project-page-image-fade-out')) {
+      setActive(false);
+      setExiting(false);
     }
   };
 
-  const pending = shouldMountFade && !mountStarted;
   const mountAnimationClass = mounting ? 'project-page-image--mount' : '';
 
   const imageAnimationClass = exiting
@@ -197,12 +167,9 @@ export function ProjectPageImage({
       ? 'project-page-image--enter'
       : opacityRiseFromHome
         ? `project-page-image--from-home${opacityRiseActive ? ' project-page-image--at-rest' : ''}`
-        : pending
-          ? 'project-page-image--pending'
-          : mountAnimationClass;
+        : mountAnimationClass;
 
-  const captionAnimationClass =
-    mounting && !opacityRiseFromHome ? 'project-page-image--mount' : pending ? 'project-page-image--pending' : '';
+  const captionAnimationClass = mounting && !opacityRiseFromHome ? mountAnimationClass : '';
 
   const animationTimingStyle = mounting
     ? {
@@ -217,7 +184,7 @@ export function ProjectPageImage({
 
   return (
     <div
-      className={`project-page-image-wrap${positionFixed ? ' project-page-image-wrap--handoff-fixed' : ''}${onImageClick ? ' project-page-image-wrap--openable' : ''}${scrollFocused ? ' project-page-image-wrap--scroll-focused' : ''}`}
+      className={`project-page-image-wrap${positionFixed ? ' project-page-image-wrap--handoff-fixed' : ''}${onOpen ? ' project-page-image-wrap--openable' : ''}${scrollFocused ? ' project-page-image-wrap--scroll-focused' : ''}`}
       style={{
         top: `${top}px`,
         left: `${left}px`,
@@ -225,7 +192,6 @@ export function ProjectPageImage({
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      onClick={onImageClick}
     >
       <div
         className="project-page-image-frame"
@@ -233,6 +199,7 @@ export function ProjectPageImage({
           width: `${isLandscape ? boxWidth : renderWidth}px`,
           height: `${isLandscape ? boxHeight : renderHeight}px`,
         }}
+        onClick={onOpen}
       >
         <img
           src={image.url}

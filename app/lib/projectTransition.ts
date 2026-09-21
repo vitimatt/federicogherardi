@@ -1,4 +1,5 @@
 import type { RandomImageLayout } from '@/app/lib/randomImageLayout';
+import { FONT_FADE_MS } from '@/app/lib/siteFonts';
 
 export type ProjectTransitionPayload = {
   slug: string;
@@ -23,9 +24,11 @@ export type ColumnHidePlan = {
 };
 
 const STORAGE_KEY = 'project-transition';
+const SKIP_HOME_OPENING_KEY = 'skip-home-opening';
 const PROJECT_PAGE_BODY_CLASS = 'body--project-page';
 const PROJECT_TRANSITION_BODY_CLASS = 'body--project-transition';
 const HOME_TRANSITION_BODY_CLASS = 'body--home-transition';
+const HOME_TRANSITION_REVEAL_BODY_CLASS = 'body--home-transition-reveal';
 
 export const PROJECT_TRANSITION_START_EVENT = 'project-transition-start';
 export const PROJECT_TRANSITION_RISE_EVENT = 'project-transition-rise';
@@ -90,6 +93,20 @@ export function startHomeBackgroundTransition() {
   document.body.classList.remove(PROJECT_PAGE_BODY_CLASS, PROJECT_TRANSITION_BODY_CLASS);
   document.documentElement.classList.add(HOME_TRANSITION_BODY_CLASS);
   document.body.classList.add(HOME_TRANSITION_BODY_CLASS);
+  sessionStorage.setItem(SKIP_HOME_OPENING_KEY, '1');
+}
+
+export function consumeSkipHomeOpening() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  if (sessionStorage.getItem(SKIP_HOME_OPENING_KEY) === '1') {
+    sessionStorage.removeItem(SKIP_HOME_OPENING_KEY);
+    return true;
+  }
+
+  return isHomeBackgroundTransitionActive();
 }
 
 export function clearHomeBackgroundTransition() {
@@ -97,8 +114,51 @@ export function clearHomeBackgroundTransition() {
     return;
   }
 
-  document.documentElement.classList.remove(HOME_TRANSITION_BODY_CLASS);
-  document.body.classList.remove(HOME_TRANSITION_BODY_CLASS);
+  document.documentElement.classList.remove(
+    HOME_TRANSITION_BODY_CLASS,
+    HOME_TRANSITION_REVEAL_BODY_CLASS,
+  );
+  document.body.classList.remove(HOME_TRANSITION_BODY_CLASS, HOME_TRANSITION_REVEAL_BODY_CLASS);
+}
+
+export function replaySiteTextFadeIn() {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  const root = document.documentElement;
+
+  if (!root.classList.contains('fonts-ready')) {
+    return;
+  }
+
+  root.classList.remove('fonts-ready');
+
+  window.requestAnimationFrame(() => {
+    root.classList.add('fonts-ready', 'fonts-fading');
+    window.setTimeout(() => {
+      root.classList.remove('fonts-fading');
+    }, FONT_FADE_MS);
+  });
+}
+
+/** Fade the black veil out and replay the homepage text fade-in after project → home navigation. */
+export function beginHomeBackgroundTransitionReveal() {
+  if (typeof document === 'undefined' || !isHomeBackgroundTransitionActive()) {
+    return () => {};
+  }
+
+  replaySiteTextFadeIn();
+  document.documentElement.classList.add(HOME_TRANSITION_REVEAL_BODY_CLASS);
+  document.body.classList.add(HOME_TRANSITION_REVEAL_BODY_CLASS);
+
+  const timer = window.setTimeout(() => {
+    clearHomeBackgroundTransition();
+  }, PROJECT_TRANSITION_BG_FADE_MS);
+
+  return () => {
+    window.clearTimeout(timer);
+  };
 }
 
 export function isHomeBackgroundTransitionActive() {
